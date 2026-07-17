@@ -19,20 +19,13 @@ Then open `http://localhost:8000` in your browser. Press `Ctrl+C` in the termina
 
 If you have Node.js installed instead, `npx serve .` works the same way.
 
-## Add your photo
+## Your photo and résumé
 
-1. Drop your headshot into `assets/images/` and name it exactly `zaneta-seilerova.jpg`
-   (see `assets/images/PUT_YOUR_PHOTO_HERE.txt` for details).
-2. Delete the `.txt` placeholder file once your photo is in place.
-3. If your file is a `.png` instead, either rename it to `.jpg` or update the `src`
-   attribute on the `<img class="hero-photo">` tag near the top of `index.html`.
-
-## Add your résumé
-
-1. Drop your résumé PDF into `assets/resume/` and name it exactly
-   `zaneta-seilerova-resume.pdf`.
-2. The "Download Résumé" button in the hero section will work immediately — no code
-   changes needed.
+Both are already in place: `assets/images/zaneta-seilerova.jpg` and
+`assets/resume/zaneta-seilerova-resume.pdf`. To swap either one later, just replace the
+file at that same path with the same filename — no code changes needed. (If a
+replacement photo isn't a `.jpg`, either rename it or update the `src` on the
+`<img class="hero-photo">` tag near the top of `index.html`.)
 
 ## Add a case-study PDF
 
@@ -45,9 +38,8 @@ that way they stay current if you update the deck later. To add or swap one:
 1. In `index.html`, find the relevant `<a href="https://..." class="btn btn-secondary" target="_blank" rel="noopener noreferrer">`
    link inside that case study's panel and update the URL.
 2. To add the same button to a case study that doesn't have one yet (MOLOSOC Brand
-   Positioning, Serpentine Incense, Consciousness Intervention), copy the
-   `<p class="case-study-download">…</p>` block from an existing case study and paste it
-   right after that case study's `</dl>`.
+   Positioning), copy the `<p class="case-study-download">…</p>` block from an existing
+   case study and paste it right after that case study's `</dl>`.
 3. If you'd rather host the PDF locally instead of linking out, put the file in a folder
    like `assets/case-studies/`, then change the link's `href` to that relative path and
    swap `target="_blank" rel="noopener noreferrer"` for a `download` attribute (see how
@@ -57,15 +49,13 @@ that way they stay current if you update the deck later. To add or swap one:
 
 Everything is in `index.html`, organized top-to-bottom in the same order as the
 sections appear on the page (Hero, About, Expertise, Work, How I Work, Tools, Toptal,
-Testimonials, Contact, Footer). Look for `<!-- comments -->` marking placeholders —
-search the file for `PLACEHOLDER` to find every spot that still needs a real value:
+Testimonials, Contact, Footer).
 
-- Your email address (`mailto:` links in Contact and Footer)
-- Your LinkedIn profile URL
-- Your Toptal profile URL
-- Your live domain (used in the Open Graph tags and JSON-LD schema in `<head>`)
-- Case study details (challenge, strategy, results, tools) marked `[Add ... once available]`
-- Testimonials, once you have real ones to share
+The only content still marked as placeholder is the **Testimonials** section — the
+three quotes there are clearly-labeled drafts (`[Draft placeholder — Name, Title,
+Company]`) meant to show the tone and length that work well, not real client words.
+Swap each one in for a real testimonial as you collect them. Everything else (email,
+Toptal link, live domain, case study details) has real values filled in.
 
 ## Connecting the contact form
 
@@ -81,15 +71,20 @@ tag in `index.html`:
 
 ## Publishing the site
 
-This is a fully static site, so any static host works. Two simple options:
+The site is live at **zaneta.trafficdomseo.com**. This repository has a GitHub Actions
+workflow (`.github/workflows/`, one level up from this folder, at the repo root) that
+automatically deploys to your GoDaddy cPanel hosting over FTPS on every push to `main`.
+To publish a change:
 
-- **Netlify / Vercel:** drag-and-drop the project folder onto their dashboard, or
-  connect a Git repository for automatic deploys.
-- **GitHub Pages:** push this folder to a GitHub repository and enable Pages in the
-  repository settings.
+```bash
+git add "Personal Portafolio/Personal Portafolio Zaneta Seilerova"
+git commit -m "Describe what changed"
+git push origin main
+```
 
-Once you have a live URL, update the placeholder URLs in `index.html`'s `<head>`
-(Open Graph tags and the JSON-LD `Person` schema) to match.
+The deploy usually finishes in under a minute — check progress with `gh run list` or
+in the "Actions" tab on GitHub. Browsers sometimes cache the old `styles.css` for a bit
+after a deploy; a hard refresh (Cmd+Shift+R / Ctrl+F5) clears that up.
 
 ## Customizing the design
 
