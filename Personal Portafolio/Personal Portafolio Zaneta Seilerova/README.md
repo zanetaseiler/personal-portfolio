@@ -29,21 +29,16 @@ replacement photo isn't a `.jpg`, either rename it or update the `src` on the
 
 ## Add a case-study PDF
 
-Some case studies (MOLOSOC, Draft Coffee EU / Bona Fide, SEO Growth: NitroCoffee.store,
-AI Cybersecurity SaaS) have a "Download full case study (PDF)" button inside their
-expanded card. These currently link straight to PDFs hosted on your own sites
-(trafficdomseo.com, bonafidenitro.com, molosoc.com) rather than files in this project —
-that way they stay current if you update the deck later. To add or swap one:
+Three case studies (MOLOSOC, Draft Coffee EU / Bona Fide, AI Cybersecurity SaaS) have a
+"Download full case study (PDF)" button inside their expanded card, pointing to a file
+in `assets/case-studies/` (same pattern as the résumé button). To add or swap one:
 
-1. In `index.html`, find the relevant `<a href="https://..." class="btn btn-secondary" target="_blank" rel="noopener noreferrer">`
-   link inside that case study's panel and update the URL.
-2. To add the same button to a case study that doesn't have one yet (MOLOSOC Brand
-   Positioning), copy the `<p class="case-study-download">…</p>` block from an existing
-   case study and paste it right after that case study's `</dl>`.
-3. If you'd rather host the PDF locally instead of linking out, put the file in a folder
-   like `assets/case-studies/`, then change the link's `href` to that relative path and
-   swap `target="_blank" rel="noopener noreferrer"` for a `download` attribute (see how
-   the résumé button works, above, for that pattern).
+1. Put the PDF in `assets/case-studies/`.
+2. In `index.html`, find the relevant `<a href="assets/case-studies/..." class="btn btn-secondary" download>`
+   link inside that case study's panel and update the filename.
+3. To add the same button to a case study that doesn't have one yet (MOLOSOC Brand
+   Positioning, SEO Growth: NitroCoffee.store), copy the `<p class="case-study-download">…</p>`
+   block from an existing case study and paste it right after that case study's `</dl>`.
 
 ## Editing the content
 
