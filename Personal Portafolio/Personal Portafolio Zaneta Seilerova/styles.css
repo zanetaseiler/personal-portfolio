@@ -703,6 +703,12 @@ textarea:focus-visible {
   gap: var(--space-md);
 }
 
+/* Reserves blank space while no testimonials are present yet, so the section doesn't
+   feel cramped; disappears automatically once real testimonial-card items are added. */
+.testimonial-grid:empty {
+  min-height: 120px;
+}
+
 .testimonial-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
