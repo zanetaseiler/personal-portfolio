@@ -1,8 +1,0 @@
-Add your résumé PDF to this folder.
-
-1. Name the file exactly:      zaneta-seilerova-resume.pdf
-
-2. Once the file is in place, the "Download Résumé" button in the hero
-   section of index.html will work automatically — no code changes needed.
-
-3. Delete this .txt file once your résumé is in place.
