@@ -572,6 +572,37 @@ textarea:focus-visible {
   border: 1px solid var(--color-border);
 }
 
+/* Headline metrics for a case study — figures only, never comparative series,
+   so no legend/color-coding is needed per the stat-tile pattern. */
+.case-study-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-lg);
+  margin: var(--space-lg) var(--space-lg) 0;
+  padding-bottom: var(--space-md);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-width: 220px;
+}
+
+.stat-value {
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 1.75rem;
+  color: var(--color-accent-strong);
+  line-height: 1.1;
+}
+
+.stat-label {
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
 .case-study-note {
   margin: var(--space-md) var(--space-lg) 0;
   color: var(--color-text-muted);
@@ -939,6 +970,11 @@ textarea:focus-visible {
 
   .case-study-download {
     margin: 0 var(--space-md) var(--space-md);
+  }
+
+  .case-study-stats {
+    margin: var(--space-md) var(--space-md) 0;
+    gap: var(--space-md);
   }
 
   .footer-inner {
