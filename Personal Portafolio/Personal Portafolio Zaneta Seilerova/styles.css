@@ -45,6 +45,20 @@
   --shadow-card-hover: 0 16px 40px rgba(43, 37, 33, 0.10);
 
   --header-height: 76px;
+
+  /* Motion tokens — vanilla equivalent of the cinematic-web skill's motion-tokens.ts.
+     Always animate through these; never hardcode ad-hoc easing/duration elsewhere. */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);      /* fast start, long graceful settle — the workhorse for reveals */
+  --ease-in-out-expo: cubic-bezier(0.83, 0, 0.17, 1);  /* scrubbed/scroll-linked motion */
+  --ease-soft: cubic-bezier(0.25, 1, 0.5, 1);          /* gentle, small UI moves */
+  --ease-back: cubic-bezier(0.34, 1.56, 0.64, 1);      /* slight overshoot — buttons, playful accents */
+
+  --duration-fast: 0.3s;
+  --duration-base: 0.6s;
+  --duration-slow: 0.8s;
+
+  --stagger-tight: 0.07s;
+  --stagger-base: 0.1s;
 }
 
 /* ---------------------------------------------------------------------
@@ -107,7 +121,12 @@ p {
 /* Respect users who prefer reduced motion: kill smooth scroll + scroll-reveal transitions */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
-  * { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0s !important; /* staggered reveals must not still wait out their delay */
+  }
 }
 
 /* Consistent, visible focus state for keyboard navigation */
@@ -179,7 +198,7 @@ textarea:focus-visible {
 .reveal {
   opacity: 0;
   transform: translateY(16px);
-  transition: opacity 0.6s ease, transform 0.6s ease;
+  transition: opacity var(--duration-base) var(--ease-out-expo), transform var(--duration-base) var(--ease-out-expo);
 }
 
 .reveal.is-visible {
@@ -197,14 +216,19 @@ textarea:focus-visible {
   font-weight: 600;
   font-size: 0.95rem;
   text-decoration: none;
-  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, color 0.15s ease;
+  transition: transform 0.3s var(--ease-back), box-shadow 0.2s var(--ease-soft), background 0.2s var(--ease-soft), color 0.2s var(--ease-soft);
   border: 1px solid transparent;
   cursor: pointer;
 }
 
 .btn:hover {
   text-decoration: none;
-  transform: translateY(-2px);
+  transform: translateY(-3px);
+}
+
+.btn:active {
+  transform: translateY(-1px) scale(0.98);
+  transition-duration: 0.1s;
 }
 
 .btn-primary {
@@ -286,22 +310,50 @@ textarea:focus-visible {
 }
 
 .nav-link {
+  position: relative;
   color: var(--color-text);
   font-weight: 500;
   font-size: 0.95rem;
   padding: 0.4rem 0.1rem;
-  border-bottom: 2px solid transparent;
+}
+
+/* Animated underline sweep instead of an instant border-color swap. The underline
+   is a pseudo-element that scales in from 0 width, anchored left, on hover/active —
+   a small but deliberate detail rather than a default hover state. */
+.nav-link::after {
+  content: "";
+  position: absolute;
+  left: 0.1rem;
+  right: 0.1rem;
+  bottom: 0;
+  height: 2px;
+  background: var(--color-accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--duration-fast) var(--ease-out-expo), background-color var(--duration-fast) var(--ease-soft);
 }
 
 .nav-link:hover {
   text-decoration: none;
-  border-bottom-color: var(--color-accent);
+}
+
+.nav-link:hover::after {
+  transform: scaleX(1);
 }
 
 /* Active section link, toggled by JS via IntersectionObserver */
 .nav-link.is-active {
   color: var(--color-accent-strong);
-  border-bottom-color: var(--color-accent-strong);
+}
+
+.nav-link.is-active::after {
+  background: var(--color-accent-strong);
+  transform: scaleX(1);
+}
+
+.nav-cta.is-active::after,
+.nav-cta::after {
+  display: none; /* the CTA button already has its own filled background as the "active" affordance */
 }
 
 .nav-cta {
@@ -313,7 +365,6 @@ textarea:focus-visible {
 
 .nav-cta:hover {
   background: var(--color-accent-strong);
-  border-bottom-color: transparent;
 }
 
 .menu-toggle {
@@ -334,7 +385,7 @@ textarea:focus-visible {
   width: 24px;
   height: 2px;
   background: var(--color-text);
-  transition: transform 0.2s ease, opacity 0.2s ease;
+  transition: transform var(--duration-fast) var(--ease-soft), opacity var(--duration-fast) var(--ease-soft);
 }
 
 /* Hamburger -> X, driven by JS toggling .is-open on the button */
@@ -358,6 +409,18 @@ textarea:focus-visible {
 
 .hero-photo-wrap {
   position: relative;
+}
+
+/* Photo gets its own scale+fade entrance instead of the flat slide-up every other
+   .reveal element uses — a bigger element reads as more premium settling into place
+   rather than sliding, per the hero being priority #1 for cinematic treatment. */
+.hero-photo-wrap.reveal {
+  transform: scale(0.96);
+  transition: opacity var(--duration-slow) var(--ease-out-expo), transform var(--duration-slow) var(--ease-out-expo);
+}
+
+.hero-photo-wrap.reveal.is-visible {
+  transform: scale(1);
 }
 
 .hero-photo {
@@ -393,6 +456,31 @@ textarea:focus-visible {
   margin-top: var(--space-md);
 }
 
+/* Staggered entrance for the hero text block. The parent (.hero-content) is the
+   element JS observes and marks .is-visible — but the parent itself is exempted from
+   the generic .reveal animation just below, so ONLY its children animate, each on its
+   own beat. Zero JS changes needed: this is pure CSS reacting to the same class JS
+   already toggles. */
+.hero-content.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.hero-content > * {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity var(--duration-base) var(--ease-out-expo), transform var(--duration-base) var(--ease-out-expo);
+}
+
+.hero-content.is-visible > * { opacity: 1; transform: translateY(0); }
+
+.hero-content.is-visible > .eyebrow      { transition-delay: 0.05s; }
+.hero-content.is-visible > h1            { transition-delay: 0.12s; }
+.hero-content.is-visible > .hero-title   { transition-delay: 0.19s; }
+.hero-content.is-visible > .hero-intro   { transition-delay: 0.26s; }
+.hero-content.is-visible > .hero-actions { transition-delay: 0.33s; }
+
 /* ---------------------------------------------------------------------
    7. ABOUT
    --------------------------------------------------------------------- */
@@ -413,6 +501,36 @@ textarea:focus-visible {
   gap: 0.6rem;
 }
 
+/* Staggered entrance — same pattern as the other sections, but tighter spacing since
+   there are 13 pills; a 0.07s gap here would take almost a full second to finish. */
+.tag-list.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.tag-list > .tag {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity var(--duration-fast) var(--ease-out-expo), transform var(--duration-fast) var(--ease-out-expo);
+}
+
+.tag-list.is-visible > .tag { opacity: 1; transform: translateY(0); }
+
+.tag-list.is-visible > .tag:nth-child(1)  { transition-delay: 0s; }
+.tag-list.is-visible > .tag:nth-child(2)  { transition-delay: 0.035s; }
+.tag-list.is-visible > .tag:nth-child(3)  { transition-delay: 0.07s; }
+.tag-list.is-visible > .tag:nth-child(4)  { transition-delay: 0.105s; }
+.tag-list.is-visible > .tag:nth-child(5)  { transition-delay: 0.14s; }
+.tag-list.is-visible > .tag:nth-child(6)  { transition-delay: 0.175s; }
+.tag-list.is-visible > .tag:nth-child(7)  { transition-delay: 0.21s; }
+.tag-list.is-visible > .tag:nth-child(8)  { transition-delay: 0.245s; }
+.tag-list.is-visible > .tag:nth-child(9)  { transition-delay: 0.28s; }
+.tag-list.is-visible > .tag:nth-child(10) { transition-delay: 0.315s; }
+.tag-list.is-visible > .tag:nth-child(11) { transition-delay: 0.35s; }
+.tag-list.is-visible > .tag:nth-child(12) { transition-delay: 0.385s; }
+.tag-list.is-visible > .tag:nth-child(13) { transition-delay: 0.42s; }
+
 .tag {
   background: var(--color-accent-tint);
   color: var(--color-accent-strong);
@@ -431,17 +549,43 @@ textarea:focus-visible {
   gap: var(--space-md);
 }
 
+/* Staggered entrance, same pattern as the hero: the parent is what JS observes and
+   marks .is-visible, but the parent itself opts out of the generic .reveal animation
+   so each card can animate on its own beat instead of the whole grid popping in at once. */
+.card-grid.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.card-grid > .expertise-card {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity var(--duration-base) var(--ease-out-expo), transform var(--duration-base) var(--ease-out-expo),
+              box-shadow var(--duration-base) var(--ease-soft);
+}
+
+.card-grid.is-visible > .expertise-card { opacity: 1; transform: translateY(0); }
+
+.card-grid.is-visible > .expertise-card:nth-child(1) { transition-delay: 0s; }
+.card-grid.is-visible > .expertise-card:nth-child(2) { transition-delay: 0.07s; }
+.card-grid.is-visible > .expertise-card:nth-child(3) { transition-delay: 0.14s; }
+.card-grid.is-visible > .expertise-card:nth-child(4) { transition-delay: 0.21s; }
+.card-grid.is-visible > .expertise-card:nth-child(5) { transition-delay: 0.28s; }
+.card-grid.is-visible > .expertise-card:nth-child(6) { transition-delay: 0.35s; }
+.card-grid.is-visible > .expertise-card:nth-child(7) { transition-delay: 0.42s; }
+.card-grid.is-visible > .expertise-card:nth-child(8) { transition-delay: 0.49s; }
+
 .expertise-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: var(--space-md);
   box-shadow: var(--shadow-card);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .expertise-card:hover {
-  transform: translateY(-4px);
+  transform: translateY(-6px);
   box-shadow: var(--shadow-card-hover);
 }
 
@@ -455,6 +599,11 @@ textarea:focus-visible {
   background: var(--color-accent-tint);
   color: var(--color-accent-strong);
   margin-bottom: var(--space-sm);
+  transition: transform var(--duration-fast) var(--ease-back);
+}
+
+.expertise-card:hover .expertise-icon {
+  transform: scale(1.1) rotate(-4deg);
 }
 
 .expertise-icon svg {
@@ -477,11 +626,39 @@ textarea:focus-visible {
   gap: var(--space-md);
 }
 
+/* Staggered entrance — same pattern used for the hero and expertise cards: the
+   parent opts out of the generic .reveal animation so each card cascades in on
+   its own beat instead of the whole list popping in as one block. */
+.case-study-list.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.case-study-list > .case-study {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity var(--duration-base) var(--ease-out-expo), transform var(--duration-base) var(--ease-out-expo),
+              box-shadow var(--duration-base) var(--ease-soft);
+}
+
+.case-study-list.is-visible > .case-study { opacity: 1; transform: translateY(0); }
+
+.case-study-list.is-visible > .case-study:nth-child(1) { transition-delay: 0s; }
+.case-study-list.is-visible > .case-study:nth-child(2) { transition-delay: 0.1s; }
+.case-study-list.is-visible > .case-study:nth-child(3) { transition-delay: 0.2s; }
+.case-study-list.is-visible > .case-study:nth-child(4) { transition-delay: 0.3s; }
+.case-study-list.is-visible > .case-study:nth-child(5) { transition-delay: 0.4s; }
+
 .case-study {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   overflow: hidden;
+}
+
+.case-study:hover {
+  box-shadow: var(--shadow-card-hover);
 }
 
 .case-study-toggle {
@@ -497,6 +674,11 @@ textarea:focus-visible {
   text-align: left;
   font: inherit;
   color: inherit;
+  transition: background-color var(--duration-fast) var(--ease-soft);
+}
+
+.case-study-toggle:hover {
+  background-color: var(--color-bg-alt);
 }
 
 .case-study-name {
@@ -520,7 +702,7 @@ textarea:focus-visible {
   align-items: center;
   justify-content: center;
   color: var(--color-accent-strong);
-  transition: transform 0.25s ease;
+  transition: transform var(--duration-fast) var(--ease-soft);
 }
 
 .case-study-chevron svg {
@@ -536,7 +718,7 @@ textarea:focus-visible {
 .case-study-panel {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows 0.3s ease;
+  transition: grid-template-rows var(--duration-base) var(--ease-out-expo);
   min-height: 0;
 }
 
@@ -665,6 +847,40 @@ textarea:focus-visible {
   gap: 0.75rem;
 }
 
+/* Staggered entrance — same pattern as the tag pills, tuned for 16 items so the
+   whole cascade still finishes in well under half a second. */
+.tools-grid.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.tools-grid > .tool-badge {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity var(--duration-fast) var(--ease-out-expo), transform var(--duration-fast) var(--ease-out-expo),
+              border-color var(--duration-fast) var(--ease-soft);
+}
+
+.tools-grid.is-visible > .tool-badge { opacity: 1; transform: translateY(0); }
+
+.tools-grid.is-visible > .tool-badge:nth-child(1)  { transition-delay: 0s; }
+.tools-grid.is-visible > .tool-badge:nth-child(2)  { transition-delay: 0.03s; }
+.tools-grid.is-visible > .tool-badge:nth-child(3)  { transition-delay: 0.06s; }
+.tools-grid.is-visible > .tool-badge:nth-child(4)  { transition-delay: 0.09s; }
+.tools-grid.is-visible > .tool-badge:nth-child(5)  { transition-delay: 0.12s; }
+.tools-grid.is-visible > .tool-badge:nth-child(6)  { transition-delay: 0.15s; }
+.tools-grid.is-visible > .tool-badge:nth-child(7)  { transition-delay: 0.18s; }
+.tools-grid.is-visible > .tool-badge:nth-child(8)  { transition-delay: 0.21s; }
+.tools-grid.is-visible > .tool-badge:nth-child(9)  { transition-delay: 0.24s; }
+.tools-grid.is-visible > .tool-badge:nth-child(10) { transition-delay: 0.27s; }
+.tools-grid.is-visible > .tool-badge:nth-child(11) { transition-delay: 0.3s; }
+.tools-grid.is-visible > .tool-badge:nth-child(12) { transition-delay: 0.33s; }
+.tools-grid.is-visible > .tool-badge:nth-child(13) { transition-delay: 0.36s; }
+.tools-grid.is-visible > .tool-badge:nth-child(14) { transition-delay: 0.39s; }
+.tools-grid.is-visible > .tool-badge:nth-child(15) { transition-delay: 0.42s; }
+.tools-grid.is-visible > .tool-badge:nth-child(16) { transition-delay: 0.45s; }
+
 .tool-badge {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -672,12 +888,11 @@ textarea:focus-visible {
   padding: 0.65rem 1.1rem;
   font-size: 0.9rem;
   font-weight: 500;
-  transition: border-color 0.15s ease, transform 0.15s ease;
 }
 
 .tool-badge:hover {
   border-color: var(--color-accent);
-  transform: translateY(-2px);
+  transform: translateY(-3px);
 }
 
 /* ---------------------------------------------------------------------
@@ -709,6 +924,26 @@ textarea:focus-visible {
   min-height: 120px;
 }
 
+/* Staggered entrance, same pattern as the other card grids on the site. */
+.testimonial-grid.reveal {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.testimonial-grid > .testimonial-card {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity var(--duration-base) var(--ease-out-expo), transform var(--duration-base) var(--ease-out-expo),
+              box-shadow var(--duration-base) var(--ease-soft);
+}
+
+.testimonial-grid.is-visible > .testimonial-card { opacity: 1; transform: translateY(0); }
+
+.testimonial-grid.is-visible > .testimonial-card:nth-child(1) { transition-delay: 0s; }
+.testimonial-grid.is-visible > .testimonial-card:nth-child(2) { transition-delay: 0.1s; }
+.testimonial-grid.is-visible > .testimonial-card:nth-child(3) { transition-delay: 0.2s; }
+
 .testimonial-card {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
@@ -716,6 +951,14 @@ textarea:focus-visible {
   padding: var(--space-lg);
   margin: 0;
   box-shadow: var(--shadow-card);
+}
+
+/* Matches the hover-lift language every other card component on the site already
+   uses (Expertise cards, case studies) — a visual-consistency touch, not an
+   implied action, since these aren't clickable. */
+.testimonial-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-card-hover);
 }
 
 .testimonial-card p {
@@ -788,11 +1031,13 @@ textarea:focus-visible {
   background: var(--color-bg);
   color: var(--color-text);
   resize: vertical;
+  transition: border-color var(--duration-fast) var(--ease-soft), box-shadow var(--duration-fast) var(--ease-soft);
 }
 
 .form-row input:focus,
 .form-row textarea:focus {
   border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-tint);
 }
 
 .form-status {
@@ -838,6 +1083,7 @@ textarea:focus-visible {
 
 .footer-links a {
   color: var(--color-bg);
+  transition: color var(--duration-fast) var(--ease-soft);
 }
 
 .footer-links a:hover {
@@ -896,7 +1142,7 @@ textarea:focus-visible {
     border-bottom: 1px solid var(--color-border);
     max-height: 0;
     overflow: hidden;
-    transition: max-height 0.3s ease;
+    transition: max-height var(--duration-base) var(--ease-soft);
   }
 
   .main-nav.is-open {
