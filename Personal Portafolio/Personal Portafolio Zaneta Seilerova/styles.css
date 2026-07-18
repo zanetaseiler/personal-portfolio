@@ -847,7 +847,7 @@ textarea:focus-visible {
   gap: 0.75rem;
 }
 
-/* Staggered entrance — same pattern as the tag pills, tuned for 16 items so the
+/* Staggered entrance — same pattern as the tag pills, tuned so the
    whole cascade still finishes in well under half a second. */
 .tools-grid.reveal {
   opacity: 1;
@@ -879,7 +879,6 @@ textarea:focus-visible {
 .tools-grid.is-visible > .tool-badge:nth-child(13) { transition-delay: 0.36s; }
 .tools-grid.is-visible > .tool-badge:nth-child(14) { transition-delay: 0.39s; }
 .tools-grid.is-visible > .tool-badge:nth-child(15) { transition-delay: 0.42s; }
-.tools-grid.is-visible > .tool-badge:nth-child(16) { transition-delay: 0.45s; }
 
 .tool-badge {
   background: var(--color-surface);
