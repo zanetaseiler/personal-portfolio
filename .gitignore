@@ -1,3 +1,6 @@
 .DS_Store
 node_modules/
 .env
+
+# Lives in its own repo now: github.com/zanetaseiler/CI-App-Oracle
+CI App Oracle/
