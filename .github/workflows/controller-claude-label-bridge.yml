@@ -1,0 +1,34 @@
+name: Controller Claude label transport
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, labeled]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: controller-claude-transport-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  promote-controller-label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Convert controller Claude-ready state into the real Claude Cloud pickup label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          labels="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --jq '.[].name')"
+          if printf '%s\n' "$labels" | grep -Fxq 'READY_FOR_CLAUDE_CLOUD'; then exit 0; fi
+          if ! printf '%s\n' "$labels" | grep -Eq '^controller:(READY_FOR_CLAUDE|READY_FOR_CLAUDE_CLOUD)$'; then exit 0; fi
+          if ! gh api "repos/${REPO}/labels/READY_FOR_CLAUDE_CLOUD" >/dev/null 2>&1; then
+            gh api --method POST "repos/${REPO}/labels" -f name='READY_FOR_CLAUDE_CLOUD' -f color='aaaaaa' -f description='Claude cloud pickup queue' >/dev/null
+          fi
+          gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/labels" -f 'labels[]=READY_FOR_CLAUDE_CLOUD' >/dev/null
+          echo "Promoted controller Claude-ready state to READY_FOR_CLAUDE_CLOUD on PR #${PR_NUMBER}."
