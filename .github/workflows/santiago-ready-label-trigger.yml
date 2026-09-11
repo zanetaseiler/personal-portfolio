@@ -1,0 +1,51 @@
+name: Santiago READY label trigger
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: santiago-ready-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  emit-ready-handoff:
+    if: github.event.label.name == 'READY_FOR_SANTIAGO'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Emit fresh READY_FOR_SANTIAGO PR event with exact head SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          head_sha="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+
+          if [[ ! "${head_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve a full 40-character PR head SHA" >&2
+            exit 1
+          fi
+
+          body=$(cat <<EOF
+READY_FOR_SANTIAGO
+
+Repository: ${REPO}
+PR: ${PR_NUMBER}
+Head SHA: ${head_sha}
+Trigger: READY_FOR_SANTIAGO label added
+EOF
+)
+
+          gh api \
+            --method POST \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            -f body="${body}" >/dev/null
+
+          echo "Emitted READY_FOR_SANTIAGO handoff for PR #${PR_NUMBER} @ ${head_sha}"
