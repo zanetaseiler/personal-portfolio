@@ -1,8 +1,8 @@
-name: Controller Claude label transport
+name: Controller Claude direct transport
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, labeled]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -14,21 +14,43 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  promote-controller-label:
+  dispatch-claude:
+    if: >-
+      github.event.label.name == 'controller:READY_FOR_CLAUDE' ||
+      github.event.label.name == 'controller:READY_FOR_CLAUDE_CLOUD'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Convert controller Claude-ready state into the real Claude Cloud pickup label
+      - name: Apply the real Claude Cloud queue label
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
-          labels="$(gh api "repos/${REPO}/issues/${PR_NUMBER}/labels" --jq '.[].name')"
-          if printf '%s\n' "$labels" | grep -Fxq 'READY_FOR_CLAUDE_CLOUD'; then exit 0; fi
-          if ! printf '%s\n' "$labels" | grep -Eq '^controller:(READY_FOR_CLAUDE|READY_FOR_CLAUDE_CLOUD)$'; then exit 0; fi
           if ! gh api "repos/${REPO}/labels/READY_FOR_CLAUDE_CLOUD" >/dev/null 2>&1; then
-            gh api --method POST "repos/${REPO}/labels" -f name='READY_FOR_CLAUDE_CLOUD' -f color='aaaaaa' -f description='Claude cloud pickup queue' >/dev/null
+            gh api --method POST "repos/${REPO}/labels" \
+              -f name='READY_FOR_CLAUDE_CLOUD' \
+              -f color='aaaaaa' \
+              -f description='Claude cloud pickup queue' >/dev/null
           fi
-          gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/labels" -f 'labels[]=READY_FOR_CLAUDE_CLOUD' >/dev/null
-          echo "Promoted controller Claude-ready state to READY_FOR_CLAUDE_CLOUD on PR #${PR_NUMBER}."
+          gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/labels" \
+            -f 'labels[]=READY_FOR_CLAUDE_CLOUD' >/dev/null
+
+      - name: Checkout trusted default-branch bridge code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Fire Claude Cloud directly in this same run
+        env:
+          CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
+          CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/claude_cloud_bridge.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}"
