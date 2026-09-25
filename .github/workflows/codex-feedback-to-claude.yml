@@ -1,0 +1,121 @@
+name: Codex feedback to Claude
+
+# Codex -> Claude handoff. A Codex review with findings on the PR's current
+# head (inline comments, or "P0-P3 Badge" findings in the review summary)
+# re-queues Claude for a correction round. A current-head review with no
+# findings posts HANDOFF_IGNORED instead of exiting silently. Shared harness
+# kit file: keep identical in every repo (docs/HARNESS_TEMPLATE.md).
+
+on:
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: harness-labels-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  requeue-claude:
+    if: github.event.review.user.login == 'chatgpt-codex-connector[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate current-head Codex findings
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REVIEW_ID: ${{ github.event.review.id }}
+          REVIEW_COMMIT: ${{ github.event.review.commit_id }}
+          REVIEW_BODY: ${{ github.event.review.body || '' }}
+        run: |
+          set -euo pipefail
+
+          current_head="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.head.sha')"
+          if [[ ! "${current_head}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Could not resolve current PR head" >&2
+            exit 1
+          fi
+
+          if [[ "${REVIEW_COMMIT}" != "${current_head}" ]]; then
+            echo "Ignoring stale Codex review ${REVIEW_ID}: ${REVIEW_COMMIT} != ${current_head}"
+            echo "has_findings=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          inline_findings="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews/${REVIEW_ID}/comments" --jq 'length')"
+          body_has_findings=false
+          if printf '%s\n' "${REVIEW_BODY}" | grep -Eiq 'P[0-3][[:space:]]+Badge'; then
+            body_has_findings=true
+          fi
+
+          if [[ "${inline_findings}" -eq 0 && "${body_has_findings}" != "true" ]]; then
+            echo "Codex review has no findings; Claude not re-queued."
+            gh api --method POST "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f body="$(printf 'HANDOFF_IGNORED\n\n- reason: Codex review %s on head `%s` has no inline comments and no P0-P3 findings in its summary, so Claude was not re-queued.\n- effect: nothing will happen on this PR until someone posts `@codex review` again.\n' "${REVIEW_ID}" "${current_head}")" >/dev/null
+            echo "has_findings=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Validated Codex findings on current head ${current_head}: inline=${inline_findings}, review_body=${body_has_findings}."
+          echo "has_findings=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout trusted default-branch bridge
+        if: steps.validate.outputs.has_findings == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Clear stale Santiago handoff state
+        if: steps.validate.outputs.has_findings == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          for label in READY_FOR_SANTIAGO controller:READY_FOR_SANTIAGO VERIFIED; do
+            gh api --method DELETE "repos/${REPO}/issues/${PR_NUMBER}/labels/${label}" >/dev/null 2>&1 || true
+          done
+
+      - name: Queue Claude correction
+        id: queue
+        if: steps.validate.outputs.has_findings == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          pr_state="$(gh api "repos/${REPO}/pulls/${PR_NUMBER}" --jq '.state')"
+          if [[ "${pr_state}" != "open" ]]; then
+            echo "PR #${PR_NUMBER} is no longer open (state: ${pr_state}); not re-queuing."
+            echo "queued=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api \
+            --method POST \
+            "repos/${REPO}/issues/${PR_NUMBER}/labels" \
+            -f 'labels[]=READY_FOR_CLAUDE_CLOUD' >/dev/null
+          echo "queued=true" >> "$GITHUB_OUTPUT"
+
+      # A label added with GITHUB_TOKEN never triggers another workflow, so
+      # the bridge is fired directly here rather than via the label event.
+      - name: Fire Claude correction directly
+        if: steps.validate.outputs.has_findings == 'true' && steps.queue.outputs.queued == 'true'
+        env:
+          CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
+          CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/claude_cloud_bridge.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}"
