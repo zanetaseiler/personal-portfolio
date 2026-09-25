@@ -24,3 +24,6 @@ identical in every repository that runs the Claude <-> Santiago/Codex loop.
    session chat: a question or summary left only in chat stops the work
    silently. Žaneta answers `NEEDS_ZANETA` with a `ZANETA_DECISION` comment,
    which restarts Claude automatically.
+6. Never merge a PR yourself. A `VERIFIED` PR is merged by the harness
+   (`MERGED` comment, Žaneta's standing decision of 2026-09-25); that merge
+   is not an instruction to start more work.
