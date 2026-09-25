@@ -1,0 +1,114 @@
+name: Codex clean review → VERIFIED
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: codex-clean-verified-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.event.issue.pull_request != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Validate clean Codex review against current head
+        id: validate
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const actor = context.payload.comment?.user?.login || "";
+            const body = context.payload.comment?.body || "";
+
+            if (actor !== "chatgpt-codex-connector[bot]") {
+              core.info(`Ignoring comment from ${actor}.`);
+              core.setOutput("valid", "false");
+              return;
+            }
+
+            if (!body.includes("Didn't find any major issues")) {
+              core.info("Ignoring non-clean Codex comment.");
+              core.setOutput("valid", "false");
+              return;
+            }
+
+            const reviewed = (
+              body.match(/Reviewed commit:\*{0,2}\s*`?([0-9a-f]{7,40})`?/i) ||
+              body.match(/Commit reviewed:\*{0,2}\s*`?([0-9a-f]{7,40})`?/i) ||
+              []
+            )[1];
+
+            if (!reviewed) {
+              core.setFailed("Clean Codex comment is missing a reviewed commit SHA.");
+              return;
+            }
+
+            const { owner, repo } = context.repo;
+            const pull_number = context.issue.number;
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const currentHead = pr.head.sha.toLowerCase();
+            const reviewedHead = reviewed.toLowerCase();
+
+            if (!currentHead.startsWith(reviewedHead)) {
+              core.info(`Ignoring stale clean review: ${reviewedHead} != ${currentHead}.`);
+              core.setOutput("valid", "false");
+              return;
+            }
+
+            const marker = `VERIFIED:${currentHead}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+
+            if (comments.some(comment => (comment.body || "").includes(marker))) {
+              core.info("Exact-head VERIFIED marker already exists.");
+              core.setOutput("valid", "false");
+              return;
+            }
+
+            core.setOutput("valid", "true");
+            core.setOutput("head_sha", currentHead);
+
+      - name: Record VERIFIED and stop at human merge gate
+        if: steps.validate.outputs.valid == 'true'
+        uses: actions/github-script@v8
+        env:
+          HEAD_SHA: ${{ steps.validate.outputs.head_sha }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.issue.number;
+            const head = process.env.HEAD_SHA;
+
+            for (const label of ["READY_FOR_SANTIAGO", "controller:READY_FOR_SANTIAGO"]) {
+              try {
+                await github.rest.issues.removeLabel({ owner, repo, issue_number, name: label });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+
+            await github.rest.issues.addLabels({ owner, repo, issue_number, labels: ["VERIFIED"] });
+
+            const body = [
+              "VERIFIED",
+              "",
+              `- exact head commit SHA: \`${head}\``,
+              "- reviewer: Santiago/Codex",
+              "- result: Codex found no major issues on this exact head",
+              "- next: human merge gate; no merge performed",
+              `- marker: VERIFIED:${head}`,
+            ].join("\n");
+
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+            core.info(`Recorded VERIFIED for PR #${issue_number} @ ${head}.`);
