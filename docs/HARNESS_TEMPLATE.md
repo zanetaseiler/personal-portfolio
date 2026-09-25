@@ -15,7 +15,7 @@ Santiago opens a task Issue (label optional)
   → handoff workflow posts "@codex review"
   → Codex reviews the exact head
        findings → Claude re-dispatched  → ROUTINE_DISPATCHED comment → correction → READY_FOR_SANTIAGO …
-       clean    → VERIFIED comment      → human merges (no agent ever merges)
+       clean    → VERIFIED comment      → harness merges automatically → MERGED comment
   Claude needs a decision → NEEDS_ZANETA → Žaneta answers ZANETA_DECISION → Claude restarted automatically
 ```
 
@@ -44,7 +44,7 @@ Copy these files verbatim. When one changes, change it in
 | `.github/scripts/harness_guard.py` (called by the bridge workflow and `codex-feedback-to-claude.yml`) | One Claude session per Block: routes an Issue's label to its open PR, refuses a second session while one is working |
 | `.github/workflows/santiago-ready-label-trigger.yml` | Claude → `@codex review` (Handoff 2)* |
 | `.github/workflows/codex-feedback-to-claude.yml` | Codex findings → re-start Claude (Handoff 3) |
-| `.github/workflows/codex-clean-verified.yml` | Clean Codex review → `VERIFIED` (add it if the repo lacks one) |
+| `.github/workflows/codex-clean-verified.yml` + `.github/scripts/harness_automerge.py` | Clean Codex review → `VERIFIED` → automatic merge of that exact head once its checks pass |
 | `.github/workflows/harness-requeue.yml` + `.github/scripts/harness_requeue.py` | New task Issue → start Claude; `ZANETA_DECISION` → restart Claude. No manual label |
 | `.github/workflows/harness-watchdog.yml` + `.github/scripts/harness_watchdog.py` | Reports silent stalls |
 | `docs/HARNESS_TEMPLATE.md` (this file) and the "Harness handoff rules" block in `CLAUDE.md` | The rules |
@@ -107,7 +107,12 @@ Copy these files verbatim. When one changes, change it in
 - Answer a `NEEDS_ZANETA` with a comment whose first line is
   `ZANETA_DECISION` (anything may follow on that line, e.g. a date). That
   restarts Claude; nothing else is needed.
-- Merge a PR once it shows `VERIFIED`.
+- Nothing to merge: a `VERIFIED` PR merges automatically (standing decision,
+  2026-09-25) and gets a `MERGED` comment. If `AUTO_MERGE_SKIPPED` appears
+  instead, it says why (a check this PR broke, a conflict, a push after
+  VERIFIED) and what to do.
+- To keep a PR from merging on its own, put `HOLD` in its title or add the
+  label `NO_AUTO_MERGE`.
 
 **Claude (every session)**
 - Before any edit: a `CONTEXT_RECEIPT` comment (its own comment).
@@ -145,7 +150,9 @@ summary; both re-start Claude.
 | `ROUTINE_FIRE_FAILED` (github-actions) | Claude could not be started | read the error, re-add the label |
 | `@codex review` right after `READY_FOR_SANTIAGO` | Handoff accepted | nothing |
 | `HANDOFF_IGNORED` (github-actions) | Handoff rejected; reason inside | do what the reason says |
-| `VERIFIED` (github-actions) | Codex found nothing on this head | review and merge |
+| `VERIFIED` (github-actions) | Codex found nothing on this head | nothing; it merges automatically |
+| `MERGED` (github-actions) | The VERIFIED head was merged | nothing |
+| `AUTO_MERGE_SKIPPED` (github-actions) | VERIFIED, but not merged; reason inside | do what the reason says |
 | `HARNESS_STALLED` (github-actions) | A step silently stopped; the step and fix are inside | do the one fix it names |
 | `NEEDS_ZANETA` (Claude) | A human decision is needed | reply `ZANETA_DECISION …` |
 
