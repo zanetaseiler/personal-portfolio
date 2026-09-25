@@ -42,7 +42,6 @@ import sys
 
 KEYWORD = "READY_FOR_SANTIAGO"
 SHORT_SHA = 7
-_DECORATION = re.compile(r"[\s#*`>:]+")
 _HEX_TOKEN = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])")
 
 HANDOFF = "handoff"
@@ -51,14 +50,18 @@ NOT_A_HANDOFF = "not_a_handoff"
 
 
 def has_keyword_line(body, keyword=KEYWORD):
-    """True when `keyword` appears on its own line outside a ``` fence,
-    ignoring Markdown decoration around it."""
+    """True when a line outside a ``` fence starts with `keyword`, ignoring
+    Markdown decoration before it (`## `, `**`, `` ` ``, `> `) and allowing
+    anything after it that is not part of a longer word -- so
+    `ZANETA_DECISION — 2026-09-25` and `**READY_FOR_SANTIAGO**` count, but
+    `READY_FOR_SANTIAGO_X` and a mid-sentence mention do not."""
+    pattern = re.compile(rf"{re.escape(keyword)}(?!\w)")
     in_fence = False
     for line in (body or "").splitlines():
         if line.strip().startswith("```"):
             in_fence = not in_fence
             continue
-        if not in_fence and _DECORATION.sub("", line) == keyword:
+        if not in_fence and pattern.match(line.strip().lstrip("#*`> \t")):
             return True
     return False
 
@@ -102,12 +105,12 @@ def evaluate(*, body, author, owner, is_pr, current_head):
         f"READY_FOR_SANTIAGO with `exact head commit SHA: {head}`.")
 
 
-def ignored_notice(reason):
+def ignored_notice(reason, effect=("Codex was NOT asked to review. Nothing will happen on "
+                                    "this PR until a valid handoff is posted.")):
     return (
         "HANDOFF_IGNORED\n\n"
         f"- reason: {reason}\n"
-        "- effect: Codex was NOT asked to review. Nothing will happen on this PR "
-        "until a valid handoff is posted.\n"
+        f"- effect: {effect}\n"
         "- format: see `docs/HARNESS_TEMPLATE.md`.\n")
 
 

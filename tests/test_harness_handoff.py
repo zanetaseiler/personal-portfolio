@@ -67,6 +67,14 @@ class TestKeywordLine(unittest.TestCase):
             with self.subTest(line=line):
                 self.assertEqual(evaluate(f"{line}\n\nHead SHA: {HEAD[:7]}")[0], handoff.HANDOFF)
 
+    def test_keyword_followed_by_a_dash_and_date_counts(self):
+        self.assertTrue(handoff.has_keyword_line("ZANETA_DECISION \u2014 2026-09-25\n\nGo.",
+                                                 "ZANETA_DECISION"))
+        self.assertEqual(evaluate(f"READY_FOR_SANTIAGO \u2014 round 3\n{HEAD}")[0], handoff.HANDOFF)
+
+    def test_longer_word_is_not_the_keyword(self):
+        self.assertFalse(handoff.has_keyword_line("READY_FOR_SANTIAGO_LATER\n" + HEAD))
+
     def test_inline_mention_is_not_a_handoff(self):
         body = f"No live publish -- this Block stops at `READY_FOR_SANTIAGO` ({HEAD})."
         self.assertEqual(evaluate(body), (handoff.NOT_A_HANDOFF, ""))

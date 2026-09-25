@@ -52,31 +52,80 @@ READY = f"READY_FOR_SANTIAGO\n- exact head commit SHA: `{HEAD}`"
 
 class TestIssueChecks(unittest.TestCase):
 
-    def issue(self, labels=(), body="", created="2026-09-25T10:00:00Z"):
-        return {"number": 64, "labels": [{"name": n} for n in labels], "body": body,
-                "created_at": created}
+    TASK = "Do X.\n\n## Protocol\n\nMandatory workflow: CONTEXT_RECEIPT -> PR -> READY_FOR_SANTIAGO"
 
-    def test_label_written_as_text_is_reported(self):
-        stall = watchdog.check_issue(self.issue(body="Do X.\n\nREADY_FOR_CLAUDE_CLOUD"), [],
-                                     labeled_at=None, now=NOW)
-        self.assertEqual(stall[0], "label-as-text")
+    def issue(self, labels=(), body="", created="2026-09-25T10:00:00Z", title="Task"):
+        return {"number": 287, "labels": [{"name": n} for n in labels], "body": body,
+                "created_at": created, "title": title}
 
-    def test_label_as_text_is_fine_once_dispatched(self):
-        comments = [comment("ROUTINE_DISPATCHED\n", "2026-09-25T10:01:00Z", ACTIONS)]
-        self.assertIsNone(watchdog.check_issue(self.issue(body="READY_FOR_CLAUDE_CLOUD"),
-                                               comments, labeled_at=None, now=NOW))
+    def check(self, issue, comments=(), labeled_at=None, linked_prs=()):
+        return watchdog.check_issue(issue, list(comments), labeled_at=labeled_at,
+                                    linked_prs=list(linked_prs), now=NOW)
+
+    def test_zoe_287_task_issue_never_started_is_reported(self):
+        # Real Zoe #287: task Issue opened without the label, no comments, never picked up.
+        self.assertEqual(self.check(self.issue(body=self.TASK))[0], "not-started")
+
+    def test_started_task_or_one_with_a_pr_is_fine(self):
+        dispatched = [comment("ROUTINE_DISPATCHED\n", "2026-09-25T10:01:00Z", ACTIONS)]
+        self.assertIsNone(self.check(self.issue(body=self.TASK), dispatched))
+        self.assertIsNone(self.check(self.issue(body=self.TASK), linked_prs=[{"number": 290}]))
+
+    def test_held_old_or_non_task_issues_are_not_reported(self):
+        self.assertIsNone(self.check(self.issue(body=self.TASK, title="HOLD: later")))
+        self.assertIsNone(self.check(self.issue(body=self.TASK, created="2026-09-01T10:00:00Z")))
+        self.assertIsNone(self.check(self.issue(body="just notes")))
 
     def test_label_still_present_after_the_wait_is_reported(self):
-        stall = watchdog.check_issue(self.issue(labels=["READY_FOR_CLAUDE_CLOUD"]), [],
-                                     labeled_at="2026-09-25T11:00:00Z", now=NOW)
+        stall = self.check(self.issue(labels=["READY_FOR_CLAUDE_CLOUD"]),
+                           labeled_at="2026-09-25T11:00:00Z")
         self.assertTrue(stall[0].startswith("label:"))
 
     def test_fresh_label_is_not_reported(self):
-        self.assertIsNone(watchdog.check_issue(self.issue(labels=["READY_FOR_CLAUDE_CLOUD"]), [],
-                                               labeled_at="2026-09-25T11:55:00Z", now=NOW))
+        self.assertIsNone(self.check(self.issue(labels=["READY_FOR_CLAUDE_CLOUD"]),
+                                     labeled_at="2026-09-25T11:55:00Z"))
 
-    def test_ordinary_issue_is_not_reported(self):
-        self.assertIsNone(watchdog.check_issue(self.issue(body="notes"), [], labeled_at=None, now=NOW))
+
+class TestSessionChecks(unittest.TestCase):
+
+    def dispatch(self, at, cid=1):
+        c = comment("ROUTINE_DISPATCHED\n- session url: https://claude.ai/code/cse_01TKBStW\n", at, ACTIONS)
+        c["id"] = cid
+        return c
+
+    def check(self, comments, linked=()):
+        return watchdog.check_session(list(comments), linked_comments=list(linked), now=NOW)
+
+    def test_zoe_289_session_that_ended_silently_is_reported(self):
+        # Real Zoe #289: dispatched 07:42, session idle 07:43, nothing posted anywhere.
+        stall = self.check([self.dispatch("2026-09-25T10:42:00Z")])
+        self.assertEqual(stall[0], "session:1")
+        self.assertIn("https://claude.ai/code/cse_01TKBStW", stall[1])
+
+    def test_handoff_on_the_linked_pr_counts(self):
+        linked = [comment(READY, "2026-09-25T11:00:00Z")]
+        self.assertIsNone(self.check([self.dispatch("2026-09-25T10:42:00Z")], linked))
+
+    def test_needs_zaneta_counts_as_a_handoff(self):
+        comments = [self.dispatch("2026-09-25T10:42:00Z"),
+                    comment("NEEDS_ZANETA\n- question", "2026-09-25T10:50:00Z")]
+        self.assertIsNone(self.check(comments))
+
+    def test_session_still_running_is_not_reported(self):
+        self.assertIsNone(self.check([self.dispatch("2026-09-25T11:30:00Z")]))
+
+    def test_zoe_290_decision_that_did_not_restart_claude_is_reported(self):
+        # Real Zoe #290: ZANETA_DECISION posted 07:50, nothing started.
+        decision = comment("ZANETA_DECISION -- 2026-09-25\n\nKeep the earlier decisions.",
+                           "2026-09-25T11:30:00Z")
+        decision["id"] = 9
+        decision["body"] = "ZANETA_DECISION\n\nKeep the earlier decisions."
+        self.assertEqual(self.check([decision])[0], "decision:9")
+
+    def test_decision_followed_by_a_dispatch_is_fine(self):
+        decision = comment("ZANETA_DECISION\n\nGo.", "2026-09-25T11:30:00Z")
+        decision["id"] = 9
+        self.assertIsNone(self.check([decision, self.dispatch("2026-09-25T11:30:30Z", 2)]))
 
 
 class TestPrChecks(unittest.TestCase):
@@ -99,13 +148,6 @@ class TestPrChecks(unittest.TestCase):
                     comment("@codex review", "2026-09-24T20:31:10Z")]
         stall = self.check(comments, [review("2026-09-24T20:40:00Z")])
         self.assertEqual(stall[0], f"requeue:{HEAD}")
-
-    def test_dispatched_claude_that_never_pushed_is_reported(self):
-        comments = [comment(READY, "2026-09-24T20:31:00Z"),
-                    comment(f"ROUTINE_DISPATCHED\n- dispatch round: 0 @ {HEAD}\n",
-                            "2026-09-24T20:41:00Z", ACTIONS)]
-        stall = self.check(comments, [review("2026-09-24T20:40:00Z")])
-        self.assertEqual(stall[0], f"claude:{HEAD}")
 
     def test_older_bridge_dispatch_without_a_sha_counts_by_time(self):
         comments = [comment(READY, "2026-09-25T11:00:00Z"),
