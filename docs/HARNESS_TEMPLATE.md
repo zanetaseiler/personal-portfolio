@@ -19,6 +19,14 @@ Santiago opens a task Issue (label optional)
   Claude needs a decision → NEEDS_ZANETA → Žaneta answers ZANETA_DECISION → Claude restarted automatically
 ```
 
+**One Block, one Claude session.** A Block is an Issue plus its open PR
+(the PR that says `Closes #N`). Once the PR exists, Claude always runs on the
+PR: a label put on the Issue is moved there. While a Claude session is still
+working (started less than 60 minutes ago, no `READY_FOR_SANTIAGO` or
+`NEEDS_ZANETA` since), no second session starts for the Block; a
+`HANDOFF_IGNORED` comment names the running session instead. This stops two
+sessions from pushing the same branch at once (Zoe #297/#298).
+
 No human ever adds or re-adds a label. Every step leaves a comment, and
 the watchdog posts `HARNESS_STALLED` (saying which step stopped and the fix)
 when a step does not happen: a task never started, a Claude session that
@@ -33,6 +41,7 @@ Copy these files verbatim. When one changes, change it in
 | Path | Job |
 | --- | --- |
 | `.github/scripts/harness_handoff.py` | Decides whether a `READY_FOR_SANTIAGO` comment is a valid handoff; posts `HANDOFF_IGNORED` when not |
+| `.github/scripts/harness_guard.py` (called by the bridge workflow and `codex-feedback-to-claude.yml`) | One Claude session per Block: routes an Issue's label to its open PR, refuses a second session while one is working |
 | `.github/workflows/santiago-ready-label-trigger.yml` | Claude → `@codex review` (Handoff 2)* |
 | `.github/workflows/codex-feedback-to-claude.yml` | Codex findings → re-start Claude (Handoff 3) |
 | `.github/workflows/codex-clean-verified.yml` | Clean Codex review → `VERIFIED` (add it if the repo lacks one) |
@@ -51,7 +60,9 @@ Copy these files verbatim. When one changes, change it in
   (Handoff 1). Every version takes `--repo` and `--issue`/`--pr`, removes
   `READY_FOR_CLAUDE_CLOUD` on success and posts `ROUTINE_DISPATCHED`, or
   posts `ROUTINE_FIRE_FAILED` on failure. That contract is what the rest of
-  the kit relies on.
+  the kit relies on. The workflow's `jobs:` section (`route`, then `fire` under a
+  per-Block lock with `harness_guard.py check` before the bridge) is the
+  same in every repo; only its header comment differs.
 - Label cleanup on closed items (`harness-label-close-cleanup.yml` /
   `harness-label-reconciler.yml`) where a repo has it.
 - `santiago-changes-requested-requeue.yml` (a human `CHANGES_REQUESTED`
@@ -82,6 +93,9 @@ Copy these files verbatim. When one changes, change it in
   review → Žaneta merge/deploy approval`. That line is what starts Claude
   automatically when the Issue is opened; the label is optional.
 - Put `HOLD` in the title for an Issue that must not start yet.
+- Once a Block has a PR, work happens on the PR. You never need to re-label
+  anything; a label on the Issue is moved to the PR, and a second start
+  while Claude is still working is refused.
 - Never open a duplicate: a second Issue with the same title within 30
   minutes is not started and gets `HANDOFF_IGNORED`.
 - Put every decision the task depends on into the Issue. If one is still

@@ -107,10 +107,22 @@ jobs:
             -f 'labels[]=READY_FOR_CLAUDE_CLOUD' >/dev/null
           echo "queued=true" >> "$GITHUB_OUTPUT"
 
+      # One Claude session per Block: a Codex review of a mid-session push
+      # must not start a second session next to the one still working.
+      - name: Refuse a second session for the same Block
+        id: guard
+        if: steps.validate.outputs.has_findings == 'true' && steps.queue.outputs.queued == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/harness_guard.py check \
+            --repo "${{ github.repository }}" --kind pr \
+            --number "${{ github.event.pull_request.number }}"
+
       # A label added with GITHUB_TOKEN never triggers another workflow, so
       # the bridge is fired directly here rather than via the label event.
       - name: Fire Claude correction directly
-        if: steps.validate.outputs.has_findings == 'true' && steps.queue.outputs.queued == 'true'
+        if: steps.validate.outputs.has_findings == 'true' && steps.queue.outputs.queued == 'true' && steps.guard.outputs.go == 'true'
         env:
           CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
           CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
