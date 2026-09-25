@@ -18,3 +18,9 @@ identical in every repository that runs the Claude <-> Santiago/Codex loop.
    A correction round repeats steps 1-2.
 4. If a `HANDOFF_IGNORED` or `HARNESS_STALLED` comment appears, do exactly
    what it says.
+5. **Never end a session without one of these two comments on GitHub:**
+   `READY_FOR_SANTIAGO` on the PR (work done) or `NEEDS_ZANETA` (you are
+   blocked or need a decision -- put the question there). Nobody reads the
+   session chat: a question or summary left only in chat stops the work
+   silently. Žaneta answers `NEEDS_ZANETA` with a `ZANETA_DECISION` comment,
+   which restarts Claude automatically.

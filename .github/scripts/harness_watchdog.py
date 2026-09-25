@@ -17,25 +17,30 @@ comment is the dedupe key).
 
 Stalls detected, in loop order:
 
-1. `READY_FOR_CLAUDE_CLOUD` written as text on an Issue, never applied as a
-   label (so the bridge never fired).
+1. A task Issue (see `harness_requeue.is_claude_task`) that Claude never
+   picked up.
 2. `READY_FOR_CLAUDE_CLOUD` label still present after 15 minutes (the
    bridge removes it on a successful dispatch, so it fired and failed, or
    never ran).
-3. A PR head nobody has asked Codex to review (the READY_FOR_SANTIAGO
+3. A `ZANETA_DECISION` that did not restart Claude.
+4. A Claude session that ended without posting `READY_FOR_SANTIAGO` or
+   `NEEDS_ZANETA` -- on the item itself or, for an Issue, on an open PR that
+   references it (Zoe #289 / #294, 2026-09-25: sessions went idle with
+   nothing on GitHub).
+5. A PR head nobody has asked Codex to review (the READY_FOR_SANTIAGO
    handoff was never posted, or was rejected).
-4. `@codex review` posted on the current head but Codex never answered.
-5. Codex reviewed the current head but Claude was never re-dispatched.
-6. Claude was dispatched for the current head but never pushed a new commit.
+6. `@codex review` posted on the current head but Codex never answered.
+7. Codex reviewed the current head but Claude was never re-dispatched.
 
-Only PRs that have taken part in the loop (at least one READY_FOR_SANTIAGO
-line, or a Routine dispatch) are checked, and never a draft PR or a head
-already marked `VERIFIED:<sha>`.
+Only activity from the last 7 days is considered, so old history is never
+re-reported. PR checks skip drafts and heads already marked
+`VERIFIED:<sha>`.
 """
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -43,13 +48,15 @@ from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import harness_handoff  # noqa: E402
+import harness_requeue  # noqa: E402
 
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 CLAUDE_LABEL = "READY_FOR_CLAUDE_CLOUD"
 DISPATCH_WAIT = timedelta(minutes=15)
 HANDOFF_WAIT = timedelta(minutes=30)
 CODEX_WAIT = timedelta(minutes=30)
-CLAUDE_WAIT = timedelta(minutes=90)
+SESSION_WAIT = timedelta(minutes=60)
+RECENT = timedelta(days=7)
 MARKER = "<!-- harness-watchdog:{} -->"
 
 
@@ -75,8 +82,21 @@ def _is_dispatch_for(comment, head, since):
             and (head in body or parse_time(comment["created_at"]) >= since))
 
 
-def check_issue(issue, comments, *, labeled_at, now):
-    """Return `(key, message)` for a stalled Issue, or None."""
+def _keyword(comment, keyword):
+    return harness_handoff.has_keyword_line(comment.get("body") or "", keyword)
+
+
+def _bridge(comment, prefix="ROUTINE_"):
+    return (_login(comment) == "github-actions[bot]"
+            and (comment.get("body") or "").startswith(prefix))
+
+
+def _handed_off(comment):
+    return _keyword(comment, "READY_FOR_SANTIAGO") or _keyword(comment, "NEEDS_ZANETA")
+
+
+def check_issue(issue, comments, *, labeled_at, linked_prs, now):
+    """Return `(key, message)` for a stalled Issue (or PR queue label), or None."""
     labels = {label["name"] for label in issue.get("labels", [])}
     if CLAUDE_LABEL in labels:
         if labeled_at and now - parse_time(labeled_at) > DISPATCH_WAIT:
@@ -89,16 +109,46 @@ def check_issue(issue, comments, *, labeled_at, now):
         return None
     if "pull_request" in issue:
         return None
-    texts = [issue.get("body") or ""] + [c.get("body") or "" for c in comments]
-    dispatched = any((c.get("body") or "").startswith("ROUTINE_DISPATCHED") for c in comments)
-    if (not dispatched
-            and any(harness_handoff.has_keyword_line(t, CLAUDE_LABEL) for t in texts)
-            and now - parse_time(issue["created_at"]) > DISPATCH_WAIT):
-        return ("label-as-text",
-                f"`{CLAUDE_LABEL}` is written as text on this Issue but was never applied "
-                "as a label, so Claude was never started. Fix: apply the "
+    created = parse_time(issue["created_at"])
+    if (harness_requeue.is_claude_task(issue.get("title"), issue.get("body"))
+            and not any(_bridge(c) for c in comments)
+            and not linked_prs
+            and DISPATCH_WAIT < now - created < RECENT):
+        return ("not-started",
+                "This task Issue was never picked up by Claude (no `ROUTINE_DISPATCHED`). "
+                "Look for a failed `Harness requeue` run. Fix: apply the "
                 f"`{CLAUDE_LABEL}` label to this Issue. Do not open a duplicate Issue.")
     return None
+
+
+def check_session(comments, *, linked_comments, now):
+    """Return `(key, message)` when Claude should be working but is not."""
+    decisions = [c for c in comments if _keyword(c, harness_requeue.DECISION)]
+    if decisions:
+        decision = max(decisions, key=lambda c: c["created_at"])
+        at = parse_time(decision["created_at"])
+        later = [c for c in comments + linked_comments if parse_time(c["created_at"]) > at]
+        if (not any(_bridge(c) or _handed_off(c) for c in later)
+                and DISPATCH_WAIT < now - at < RECENT):
+            return (f"decision:{decision['id']}",
+                    f"A `ZANETA_DECISION` was posted at {at:%Y-%m-%d %H:%M} UTC but Claude was "
+                    "not restarted. Look for a failed `Harness requeue` run. Fix: apply the "
+                    f"`{CLAUDE_LABEL}` label here.")
+    dispatches = [c for c in comments if _bridge(c, "ROUTINE_DISPATCHED")]
+    if not dispatches:
+        return None
+    dispatch = max(dispatches, key=lambda c: c["created_at"])
+    at = parse_time(dispatch["created_at"])
+    later = [c for c in comments + linked_comments if parse_time(c["created_at"]) >= at]
+    if any(_handed_off(c) for c in later) or not SESSION_WAIT < now - at < RECENT:
+        return None
+    session = re.search(r"https://claude\.ai/code/\S+", dispatch.get("body") or "")
+    where = session.group(0) if session else "the session linked above"
+    return (f"session:{dispatch['id']}",
+            f"Claude was started at {at:%Y-%m-%d %H:%M} UTC but has posted neither "
+            "`READY_FOR_SANTIAGO` nor `NEEDS_ZANETA` since, so the session most likely ended "
+            f"without handing off. Open {where} to read its last message. Fix: reply with a "
+            "`ZANETA_DECISION` comment saying how to continue (that restarts Claude).")
 
 
 def check_pr(pr, comments, reviews, *, head_committed_at, now):
@@ -134,13 +184,7 @@ def check_pr(pr, comments, reviews, *, head_committed_at, now):
                         "Look for a failed `Codex feedback to Claude` run. Fix: remove and "
                         f"re-add the `{CLAUDE_LABEL}` label on this PR.")
             return None
-        last_dispatch = max(parse_time(c["created_at"]) for c in dispatches)
-        if now - last_dispatch > CLAUDE_WAIT:
-            return (f"claude:{head}",
-                    f"Claude was dispatched for head `{short}` at {last_dispatch:%Y-%m-%d %H:%M} UTC "
-                    "but has not pushed a new commit since. Open the session linked in the "
-                    "`ROUTINE_DISPATCHED` comment above to see where it stopped.")
-        return None
+        return None  # a dispatched-but-silent session is check_session's job
 
     if wakes:
         last_wake = max(parse_time(c["created_at"]) for c in wakes)
@@ -191,29 +235,40 @@ def _get(gh, path, paginate=False):
     return _paginated(raw) if paginate else json.loads(raw)
 
 
+def _references(pr, number):
+    return re.search(rf"(?<![\w/])#{number}(?!\d)", pr.get("body") or "") is not None
+
+
 def sweep(repo, *, gh=_real_gh, now=None, dry_run=False):
     now = now or datetime.now(timezone.utc)
+    items = _get(gh, f"repos/{repo}/issues?state=open&per_page=100", paginate=True)
+    comments = {item["number"]: _get(gh, f"repos/{repo}/issues/{item['number']}/comments?per_page=100",
+                                     paginate=True)
+                for item in items}
+    prs = [item for item in items if "pull_request" in item]
     reported = []
-    for item in _get(gh, f"repos/{repo}/issues?state=open&per_page=100", paginate=True):
+    for item in items:
         number = item["number"]
-        comments = _get(gh, f"repos/{repo}/issues/{number}/comments?per_page=100", paginate=True)
+        linked = [pr for pr in prs if pr["number"] != number and _references(pr, number)]
+        linked_comments = [c for pr in linked for c in comments[pr["number"]]]
         labeled_at = None
         if any(label["name"] == CLAUDE_LABEL for label in item.get("labels", [])):
             events = _get(gh, f"repos/{repo}/issues/{number}/events?per_page=100", paginate=True)
             times = [e["created_at"] for e in events
                      if e.get("event") == "labeled" and (e.get("label") or {}).get("name") == CLAUDE_LABEL]
             labeled_at = max(times) if times else None
-        stall = check_issue(item, comments, labeled_at=labeled_at, now=now)
+        stall = (check_issue(item, comments[number], labeled_at=labeled_at, linked_prs=linked, now=now)
+                 or check_session(comments[number], linked_comments=linked_comments, now=now))
         if stall is None and "pull_request" in item:
             pr = _get(gh, f"repos/{repo}/pulls/{number}")
             reviews = _get(gh, f"repos/{repo}/pulls/{number}/reviews?per_page=100", paginate=True)
             commit = _get(gh, f"repos/{repo}/commits/{pr['head']['sha']}")
-            stall = check_pr(pr, comments, reviews,
+            stall = check_pr(pr, comments[number], reviews,
                              head_committed_at=commit["commit"]["committer"]["date"], now=now)
         if stall is None:
             continue
         key, message = stall
-        if any(MARKER.format(key) in (c.get("body") or "") for c in comments):
+        if any(MARKER.format(key) in (c.get("body") or "") for c in comments[number]):
             continue
         reported.append((number, key))
         print(f"#{number}: {key}")
