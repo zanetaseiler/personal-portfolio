@@ -93,6 +93,59 @@ class TestDecision(unittest.TestCase):
                                  requeue.SKIP)
 
 
+class TestSetupProblems(unittest.TestCase):
+
+    def run_main(self, token, refuse=False):
+        import io, json, os, tempfile
+        from contextlib import redirect_stderr, redirect_stdout
+        item = issue(13, "2026-09-25T17:53:22Z")
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump({"issue": item}, handle)
+        calls = []
+
+        def gh(argv, token=None):
+            calls.append((argv, token))
+            if token and refuse:
+                raise requeue.harness_handoff.GhError("HTTP 403: Resource not accessible")
+            if argv[-1].endswith("per_page=100"):
+                return json.dumps([item])
+            if argv[-1].endswith("issues/13"):
+                return json.dumps(item)
+            return "{}"
+
+        saved = {k: os.environ.get(k) for k in ("GITHUB_EVENT_PATH", "HUMAN_TOKEN")}
+        os.environ["GITHUB_EVENT_PATH"] = handle.name
+        os.environ["HUMAN_TOKEN"] = token
+        originals = (requeue._gh, requeue.harness_handoff._gh, requeue.subprocess.run)
+        requeue._gh = requeue.harness_handoff._gh = gh
+        requeue.subprocess.run = lambda *a, **k: None  # the tolerant label DELETE
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                code = requeue.main(["--repo", "bonafide-nitro/bonafide-website", "--human", HUMAN])
+        finally:
+            requeue._gh, requeue.harness_handoff._gh, requeue.subprocess.run = originals
+            os.unlink(handle.name)
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        posts = [argv[-1] for argv, _ in calls if "--method" in argv and "/comments" in argv[3]]
+        return code, posts
+
+    def test_bonafide_13_missing_token_is_reported_on_the_issue(self):
+        code, posts = self.run_main("")
+        self.assertEqual(code, 1)
+        self.assertEqual(len(posts), 1)
+        self.assertIn("HARNESS_SETUP_PROBLEM", posts[0])
+        self.assertIn("starting Claude", posts[0])
+
+    def test_refused_token_is_reported_with_githubs_words(self):
+        code, posts = self.run_main("token", refuse=True)
+        self.assertEqual(code, 1)
+        self.assertIn("Resource not accessible", posts[-1])
+
+
 class TestWorkflow(unittest.TestCase):
 
     def setUp(self):

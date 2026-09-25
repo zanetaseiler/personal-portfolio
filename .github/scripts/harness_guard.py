@@ -119,7 +119,7 @@ def is_quiet_duplicate(dispatch, *, now):
 # --- GitHub plumbing -------------------------------------------------------
 
 def _gh(argv):
-    return subprocess.run(["gh", *argv], check=True, capture_output=True, text=True).stdout
+    return harness_handoff.run_gh(argv)
 
 
 def _get(repo, path):
