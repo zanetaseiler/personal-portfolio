@@ -134,7 +134,10 @@ def main(argv=None):
         decision, reason = evaluate_comment(event["comment"], human=args.human)
     else:
         open_issues = json.loads(_gh(["api", f"repos/{args.repo}/issues?state=open&per_page=100"]))
-        decision, reason = evaluate_opened(event["issue"], human=args.human, open_issues=open_issues)
+        # Re-read the Issue: Santiago often adds the label seconds after
+        # opening it, and re-adding it here would start the bridge twice.
+        current = json.loads(_gh(["api", f"repos/{args.repo}/issues/{number}"]))
+        decision, reason = evaluate_opened(current, human=args.human, open_issues=open_issues)
 
     print(f"{decision}: {reason}")
     if decision == IGNORED:

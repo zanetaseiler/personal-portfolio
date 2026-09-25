@@ -11,30 +11,79 @@ permissions:
   issues: write
   pull-requests: write
 
+# ONE CLAUDE SESSION PER BLOCK (.github/scripts/harness_guard.py, after
+# Zoe #297/#298 ran two sessions on one branch). `route` moves a label on an
+# Issue that already has an open PR to that PR, so a Block has one place
+# where Claude runs. `fire` holds a per-Block lock (the target number), and
+# inside it `check` refuses to start Claude while a session for the Block
+# is still working (a recent ROUTINE_DISPATCHED with no READY_FOR_SANTIAGO /
+# NEEDS_ZANETA after it). cancel-in-progress stays false: runs queue. The
+# run-level group below still serializes deliveries for one work item.
 concurrency:
   group: claude-cloud-routine-bridge-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
-  fire:
+  route:
     if: github.event.label.name == 'READY_FOR_CLAUDE_CLOUD'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      target: ${{ steps.route.outputs.target }}
+      flag: ${{ steps.route.outputs.flag }}
     steps:
-      - name: Checkout trusted default-branch code
+      - name: Checkout this repository's own trusted default-branch code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.repository.default_branch }}
           fetch-depth: 1
           persist-credentials: false
-      - name: Determine issue/PR flag
-        id: item
+
+      - name: Route the label to the Block's PR if it has one
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if [ "${{ github.event_name }}" = "issues" ]; then echo "flag=--issue" >> "$GITHUB_OUTPUT"; else echo "flag=--pr" >> "$GITHUB_OUTPUT"; fi
+          if [ "${{ github.event_name }}" = "issues" ]; then kind=issue; else kind=pr; fi
+          python3 .github/scripts/harness_guard.py route \
+            --repo "${{ github.repository }}" --kind "$kind" \
+            --number "${{ github.event.issue.number || github.event.pull_request.number }}"
+
+  fire:
+    needs: route
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: claude-block-${{ needs.route.outputs.target }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout this repository's own trusted default-branch code
+        # See the header comment above for why: never the labeled PR's own
+        # revision of scripts/claude_cloud_bridge.py, which would otherwise
+        # run with CLAUDE_ROUTINE_FIRE_TOKEN/GH_TOKEN in its environment.
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Refuse a second session for the same Block
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FLAG: ${{ needs.route.outputs.flag }}
+        run: |
+          python3 .github/scripts/harness_guard.py check \
+            --repo "${{ github.repository }}" --kind "${FLAG#--}" \
+            --number "${{ needs.route.outputs.target }}"
+
       - name: Fire Claude cloud Routine
+        if: steps.guard.outputs.go == 'true'
         env:
           CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
           CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/claude_cloud_bridge.py --repo "${{ github.repository }}" ${{ steps.item.outputs.flag }} "${{ github.event.issue.number || github.event.pull_request.number }}"
+          python3 scripts/claude_cloud_bridge.py \
+            --repo "${{ github.repository }}" \
+            ${{ needs.route.outputs.flag }} "${{ needs.route.outputs.target }}"
