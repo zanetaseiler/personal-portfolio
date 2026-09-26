@@ -60,6 +60,7 @@ DISPATCH_WAIT = timedelta(minutes=15)
 HANDOFF_WAIT = timedelta(minutes=30)
 CODEX_WAIT = timedelta(minutes=30)
 SESSION_WAIT = timedelta(minutes=60)
+RECEIPT_WAIT = timedelta(minutes=15)
 RECENT = timedelta(days=7)
 MARKER = "<!-- harness-watchdog:{} -->"
 
@@ -144,10 +145,25 @@ def check_session(comments, *, linked_comments, now):
     dispatch = max(dispatches, key=lambda c: c["created_at"])
     at = parse_time(dispatch["created_at"])
     later = [c for c in comments + linked_comments if parse_time(c["created_at"]) >= at]
-    if any(_handed_off(c) for c in later) or not SESSION_WAIT < now - at < RECENT:
+    if any(_handed_off(c) for c in later) or now - at >= RECENT:
         return None
     session = re.search(r"https://claude\.ai/code/\S+", dispatch.get("body") or "")
     where = session.group(0) if session else "the session linked above"
+    # A working session posts CONTEXT_RECEIPT within minutes. None after
+    # RECEIPT_WAIT means it ended at once -- e.g. trafficdom PR #221
+    # (2026-09-26): the session lost GitHub access, stopped after 60 seconds,
+    # and could not report that on GitHub itself. Same key as the 60-minute
+    # check below, so one silent session is reported once.
+    if (not any(_keyword(c, "CONTEXT_RECEIPT") for c in later)
+            and RECEIPT_WAIT < now - at):
+        return (f"session:{dispatch['id']}",
+                f"Claude was started at {at:%Y-%m-%d %H:%M} UTC but has not posted "
+                f"`CONTEXT_RECEIPT` within {RECEIPT_WAIT.seconds // 60} minutes, so the session "
+                f"most likely ended at once. Open {where} to read its last message (if it says "
+                "it could not reach GitHub, check the Claude GitHub App/connector's access to "
+                "this repository). Fix: reply with a `ZANETA_DECISION` comment to restart Claude.")
+    if not SESSION_WAIT < now - at:
+        return None
     return (f"session:{dispatch['id']}",
             f"Claude was started at {at:%Y-%m-%d %H:%M} UTC but has posted neither "
             "`READY_FOR_SANTIAGO` nor `NEEDS_ZANETA` since, so the session most likely ended "

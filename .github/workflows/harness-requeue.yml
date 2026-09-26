@@ -2,7 +2,9 @@ name: Harness requeue
 
 # Starts Claude on a newly opened task Issue that has no queue label, and
 # restarts Claude when Zaneta answers a NEEDS_ZANETA with a ZANETA_DECISION
-# comment -- so no human ever has to add or re-add a label. It only
+# comment or Santiago posts a CHANGES_REQUESTED review naming the PR's current
+# head (--changes-requested; replaces santiago-changes-requested-requeue.yml)
+# -- so no human ever has to add or re-add a label. It only
 # (re-)applies the queue label with the owner's token; the existing Claude
 # Cloud Routine Bridge workflow then fires exactly as for a manual label.
 # Logic: .github/scripts/harness_requeue.py (offline-tested in
@@ -27,7 +29,8 @@ jobs:
   requeue:
     if: >-
       github.event_name == 'issues' ||
-      contains(github.event.comment.body, 'ZANETA_DECISION')
+      contains(github.event.comment.body, 'ZANETA_DECISION') ||
+      contains(github.event.comment.body, 'CHANGES_REQUESTED')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -46,4 +49,5 @@ jobs:
         run: |
           python3 .github/scripts/harness_requeue.py \
             --human "${AUTHORIZED_HUMAN:-zanetaseiler}" \
-            --repo "${{ github.repository }}"
+            --repo "${{ github.repository }}" \
+            --changes-requested

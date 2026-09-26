@@ -93,6 +93,56 @@ class TestDecision(unittest.TestCase):
                                  requeue.SKIP)
 
 
+class TestChangesRequested(unittest.TestCase):
+    """trafficdom PR #221 (2026-09-26): Santiago's review started with
+    `CHANGES_REQUESTED — Santiago exact-SHA review of <sha>`; the old workflow
+    wanted the bare keyword as the whole first line and never restarted Claude."""
+
+    HEAD = "0d59b28239909631642e924f6b63374c277c886f"
+    REVIEW = (f"CHANGES_REQUESTED — Santiago exact-SHA review of `{HEAD}`\n\n"
+              "Blocking finding:\n- PR #221 is not mergeable against current `main`.\n")
+
+    def evaluate(self, body, *, user=HUMAN, is_pr=True, head=HEAD, enabled=True):
+        return requeue.evaluate_comment({"body": body, "user": {"login": user}}, human=HUMAN,
+                                        is_pr=is_pr, current_head=head,
+                                        changes_requested=enabled)
+
+    def test_trafficdom_221_review_restarts_claude(self):
+        self.assertEqual(self.evaluate(self.REVIEW)[0], requeue.START)
+
+    def test_short_sha_and_bare_keyword_work(self):
+        self.assertEqual(self.evaluate(f"CHANGES_REQUESTED\n\nhead {self.HEAD[:7]}")[0],
+                         requeue.START)
+
+    def test_review_of_an_older_head_is_ignored_loudly(self):
+        decision, reason = self.evaluate(self.REVIEW, head="f" * 40)
+        self.assertEqual(decision, requeue.IGNORED)
+        self.assertIn("current head", reason)
+
+    def test_on_an_issue_or_from_someone_else_is_ignored_loudly(self):
+        self.assertEqual(self.evaluate(self.REVIEW, is_pr=False)[0], requeue.IGNORED)
+        self.assertEqual(self.evaluate(self.REVIEW, user="bot")[0], requeue.IGNORED)
+
+    def test_mention_or_disabled_repo_does_nothing(self):
+        self.assertEqual(self.evaluate(f"Earlier CHANGES_REQUESTED on {self.HEAD} was fixed.")[0],
+                         requeue.SKIP)
+        self.assertEqual(self.evaluate(self.REVIEW, enabled=False)[0], requeue.SKIP)
+
+    def test_claude_quoting_the_review_in_its_handoff_never_restarts_claude(self):
+        handoff = (f"READY_FOR_SANTIAGO\n\n- exact head commit SHA: {self.HEAD}\n\n"
+                   "> CHANGES_REQUESTED — Santiago exact-SHA review\n")
+        self.assertEqual(self.evaluate(handoff)[0], requeue.SKIP)
+        receipt = "CONTEXT_RECEIPT\n\n> ZANETA_DECISION\n> Approved.\n"
+        self.assertEqual(self.evaluate(receipt)[0], requeue.SKIP)
+
+    def test_keyword_must_open_the_review(self):
+        self.assertEqual(self.evaluate(f"Summary first.\n\nCHANGES_REQUESTED\n{self.HEAD}")[0],
+                         requeue.SKIP)
+
+    def test_decision_still_wins(self):
+        self.assertEqual(self.evaluate("ZANETA_DECISION\n\nGo.", is_pr=False)[0], requeue.START)
+
+
 class TestSetupProblems(unittest.TestCase):
 
     def run_main(self, token, refuse=False):
@@ -161,6 +211,12 @@ class TestWorkflow(unittest.TestCase):
         self.assertIn("types: [opened]", self.text)
         self.assertIn("contains(github.event.comment.body, 'ZANETA_DECISION')", self.text)
         self.assertNotIn("schedule:", self.text)
+
+    def test_changes_requested_is_listened_for_where_enabled(self):
+        # Zoe deliberately does not requeue on CHANGES_REQUESTED; every other
+        # repo passes --changes-requested and must then listen for it.
+        if "--changes-requested" in self.text:
+            self.assertIn("contains(github.event.comment.body, 'CHANGES_REQUESTED')", self.text)
 
     def test_never_names_the_queue_label_or_fires_the_routine_itself(self):
         # The label is applied by the script; the bridge workflow stays the only

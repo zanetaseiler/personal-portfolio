@@ -112,6 +112,26 @@ def skipped_notice(reason, head):
         "new push to get a fresh VERIFIED.\n")
 
 
+def merge_refusal_reason(error, changed_files):
+    """Plain-language reason for a refused merge call. A token refusal
+    (HTTP 403) names the permissions the owner token needs -- including
+    Workflows when the PR changes a workflow file, which GitHub requires on
+    top of Contents (trafficdom PR #220, 2026-09-26: the generic 403 did not
+    say which permission was missing)."""
+    text = str(error)
+    reason = f"GitHub refused the merge: {text}"
+    if "403" not in text and "not accessible" not in text.lower():
+        return reason
+    needs = ["Contents: Read and write", "Pull requests: Read and write"]
+    workflows = sorted(f for f in changed_files if f.startswith(".github/workflows/"))
+    if workflows:
+        needs.append("Workflows: Read and write")
+        reason += (f". This PR changes {', '.join(f'`{f}`' for f in workflows)}; GitHub only lets "
+                   "a token merge workflow changes when it has Workflows permission")
+    return (reason + f". The `{harness_handoff.SECRET}` token needs: {'; '.join(needs)} "
+            "(edit the token in GitHub -> Settings -> Developer settings; the secret keeps working)")
+
+
 def merged_notice(head, merge_sha, ignored):
     lines = ["MERGED", "",
              f"- exact head commit SHA: `{head}`",
@@ -172,9 +192,16 @@ def run(repo, number, verified_head, *, sleep=time.sleep, now=time.monotonic):
             "the SANTIAGO_CODEX_BRIDGE_TOKEN secret is not configured, so the harness cannot "
             "merge as the repository owner", verified_head))
         return 1
-    result = json.loads(_gh(["api", "--method", "PUT", f"repos/{repo}/pulls/{number}/merge",
-                             "-f", f"sha={verified_head}", "-f", "merge_method=merge"],
-                            token=merge_token))
+    try:
+        result = json.loads(_gh(["api", "--method", "PUT", f"repos/{repo}/pulls/{number}/merge",
+                                 "-f", f"sha={verified_head}", "-f", "merge_method=merge"],
+                                token=merge_token))
+    except harness_handoff.GhError as error:
+        files = json.loads(_gh(["api", f"repos/{repo}/pulls/{number}/files?per_page=100"]))
+        reason = merge_refusal_reason(error, [f["filename"] for f in files])
+        print(f"::error::{reason}", file=sys.stderr)
+        _comment(repo, number, skipped_notice(reason, verified_head))
+        return 1
     _comment(repo, number, merged_notice(verified_head, result.get("sha", "?"), ignored))
     print(f"Merged PR #{number} at {verified_head}.")
     return 0
