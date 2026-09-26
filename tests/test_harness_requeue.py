@@ -196,6 +196,52 @@ class TestSetupProblems(unittest.TestCase):
         self.assertIn("Resource not accessible", posts[-1])
 
 
+class TestPrRestartStartsDirectly(unittest.TestCase):
+
+    def test_trafficdom_228_changes_requested_on_a_conflicted_pr(self):
+        import io, json, os, tempfile
+        from contextlib import redirect_stdout
+        head = "1b63b35072e3118602f765619144290e1d45b8bc"
+        event = {"issue": {"number": 228, "pull_request": {"url": "x"}},
+                 "comment": {"body": f"CHANGES_REQUESTED — Santiago exact-SHA review of `{head}`",
+                             "user": {"login": HUMAN}}}
+        calls = []
+
+        def gh(argv, token=None):
+            calls.append((argv, token))
+            if argv[-1].endswith("pulls/228"):
+                return json.dumps({"head": {"sha": head}})
+            return "{}"
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(event, handle)
+        with tempfile.NamedTemporaryFile("w", delete=False) as out:
+            pass
+        saved = {k: os.environ.get(k) for k in ("GITHUB_EVENT_PATH", "GITHUB_OUTPUT", "HUMAN_TOKEN")}
+        os.environ.update(GITHUB_EVENT_PATH=handle.name, GITHUB_OUTPUT=out.name, HUMAN_TOKEN="")
+        original = requeue._gh
+        requeue._gh = gh
+        try:
+            with redirect_stdout(io.StringIO()):
+                code = requeue.main(["--repo", "o/r", "--human", HUMAN, "--changes-requested"])
+            output = Path(out.name).read_text()
+        finally:
+            requeue._gh = original
+            os.unlink(handle.name)
+            os.unlink(out.name)
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+        self.assertEqual(code, 0)  # no owner token needed for a PR restart
+        self.assertIn("start_pr=228", output)
+        label = [(argv, token) for argv, token in calls if "--method" in argv]
+        self.assertEqual(len(label), 1)
+        self.assertTrue(label[0][0][3].endswith("issues/228/labels"))
+        self.assertIsNone(label[0][1])  # GITHUB_TOKEN: starts no second, racing workflow
+
+
 class TestWorkflow(unittest.TestCase):
 
     def setUp(self):
@@ -218,13 +264,20 @@ class TestWorkflow(unittest.TestCase):
         if "--changes-requested" in self.text:
             self.assertIn("contains(github.event.comment.body, 'CHANGES_REQUESTED')", self.text)
 
-    def test_never_names_the_queue_label_or_fires_the_routine_itself(self):
-        # The label is applied by the script; the bridge workflow stays the only
-        # place that fires the Routine (Zoe's single-control-path tests pin this).
+    def test_never_names_the_queue_label(self):
+        # The label is applied by the script (Zoe's single-control-path tests
+        # pin which workflows may name it).
         self.assertNotIn("READY_FOR_CLAUDE_CLOUD", self.text)
-        self.assertNotIn("claude_cloud_bridge", self.text)
-        self.assertNotIn("CLAUDE_ROUTINE_FIRE", self.text)
 
+    def test_pr_restart_starts_claude_directly_behind_the_guard(self):
+        # trafficdom #221/#228: GitHub runs no pull_request workflow on a PR with
+        # a merge conflict, so a PR restart cannot rely on the labeled trigger.
+        guard = self.text.index("harness_guard.py check")
+        bridge = self.text.index("scripts/claude_cloud_bridge.py")
+        self.assertLess(guard, bridge)
+        self.assertIn("if: steps.requeue.outputs.start_pr != ''", self.text)
+        self.assertIn("if: steps.guard.outputs.go == 'true'", self.text)
+        self.assertIn('--pr "${{ steps.requeue.outputs.start_pr }}"', self.text)
 
 if __name__ == "__main__":
     unittest.main()

@@ -5,8 +5,9 @@ name: Harness requeue
 # comment or Santiago posts a CHANGES_REQUESTED review naming the PR's current
 # head (--changes-requested; replaces santiago-changes-requested-requeue.yml)
 # -- so no human ever has to add or re-add a label. It only
-# (re-)applies the queue label with the owner's token; the existing Claude
-# Cloud Routine Bridge workflow then fires exactly as for a manual label.
+# (re-)applies the queue label: on an Issue with the owner's token, so the
+# Claude Cloud Routine Bridge workflow fires as for a manual label; on a PR
+# with GITHUB_TOKEN, and this run then starts Claude itself (steps below).
 # Logic: .github/scripts/harness_requeue.py (offline-tested in
 # test_harness_requeue.py). Shared harness kit file (docs/HARNESS_TEMPLATE.md).
 
@@ -42,6 +43,7 @@ jobs:
           persist-credentials: false
 
       - name: Start or restart Claude
+        id: requeue
         env:
           GH_TOKEN: ${{ github.token }}
           HUMAN_TOKEN: ${{ secrets.SANTIAGO_CODEX_BRIDGE_TOKEN }}
@@ -51,3 +53,29 @@ jobs:
             --human "${AUTHORIZED_HUMAN:-zanetaseiler}" \
             --repo "${{ github.repository }}" \
             --changes-requested
+
+      # A restart on a PR starts Claude from this run, which the comment
+      # started: GitHub runs no pull_request workflow on a PR with a merge
+      # conflict, so the bridge's own `labeled` trigger would never fire there
+      # (trafficdom #221/#228). Same one-session guard and same bridge script
+      # as claude-cloud-routine-bridge.yml.
+      - name: Refuse a second session for the same Block
+        id: guard
+        if: steps.requeue.outputs.start_pr != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/harness_guard.py check \
+            --repo "${{ github.repository }}" --kind pr \
+            --number "${{ steps.requeue.outputs.start_pr }}"
+
+      - name: Start Claude on the PR directly
+        if: steps.guard.outputs.go == 'true'
+        env:
+          CLAUDE_ROUTINE_FIRE_URL: ${{ secrets.CLAUDE_ROUTINE_FIRE_URL }}
+          CLAUDE_ROUTINE_FIRE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_FIRE_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/claude_cloud_bridge.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ steps.requeue.outputs.start_pr }}"
