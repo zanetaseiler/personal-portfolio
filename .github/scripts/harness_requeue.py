@@ -149,6 +149,25 @@ def requeue(repo, number, token):
          "-f", f"labels[]={CLAUDE_LABEL}"], token=token)
 
 
+def queue_pr_for_direct_start(repo, number):
+    """For a restart on a PR: apply the label with GITHUB_TOKEN (which starts
+    no workflow) and hand the PR number to the workflow's next steps, which
+    run the one-session guard and the bridge in this same run.
+
+    Why not the owner-token label as for an Issue: GitHub runs no
+    `pull_request` workflow on a PR with a merge conflict, so the bridge's
+    `labeled` trigger never fires there -- and updating a conflicted branch is
+    exactly what the restart is for (trafficdom #221 and #228, 2026-09-26).
+    This run was started by the comment itself, which a conflict never blocks."""
+    _gh(["api", "--method", "POST", f"repos/{repo}/issues/{number}/labels",
+         "-f", f"labels[]={CLAUDE_LABEL}"])
+    path = os.environ.get("GITHUB_OUTPUT")
+    if path:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(f"start_pr={number}\n")
+    print(f"PR #{number}: label applied; the workflow starts Claude directly.")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Start or restart Claude without a manual label.")
     parser.add_argument("--repo", required=True)
@@ -181,6 +200,8 @@ def main(argv=None):
         _gh(["api", "--method", "POST", f"repos/{args.repo}/issues/{number}/comments",
              "-f", "body=" + harness_handoff.ignored_notice(
                  reason, effect="Claude was NOT started or restarted by this.")])
+    elif decision == START and event["issue"].get("pull_request"):
+        queue_pr_for_direct_start(args.repo, number)
     elif decision == START:
         step = "starting Claude (adding READY_FOR_CLAUDE_CLOUD as the owner)"
         token = os.environ.get("HUMAN_TOKEN", "")

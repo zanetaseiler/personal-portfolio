@@ -170,6 +170,12 @@ On the Issue/PR, find the last automatic comment in the table above. The
 next step in "The loop" is the one that did not happen. The watchdog checks
 the same thing every 15 minutes and names it for you.
 
+A PR with a merge conflict (`main` moved while it waited): GitHub runs no
+pull-request workflow on it, so a label put on the PR by hand does nothing.
+A `ZANETA_DECISION` or Santiago's `CHANGES_REQUESTED` comment still starts
+Claude, which updates the branch (trafficdom #221/#228). To avoid conflicts,
+run Blocks that change the same files one after the other.
+
 When nothing at all happens and no automatic comment appears, open the
 repository's Actions tab. A failed run whose annotation says "The job was not
 started because recent account payments have failed or your spending limit
