@@ -111,8 +111,31 @@ class TestSessionChecks(unittest.TestCase):
                     comment("NEEDS_ZANETA\n- question", "2026-09-25T10:50:00Z")]
         self.assertIsNone(self.check(comments))
 
+    def receipt(self, at):
+        return comment("CONTEXT_RECEIPT\n- current base-branch commit SHA: x", at)
+
     def test_session_still_running_is_not_reported(self):
-        self.assertIsNone(self.check([self.dispatch("2026-09-25T11:30:00Z")]))
+        self.assertIsNone(self.check([self.dispatch("2026-09-25T11:30:00Z"),
+                                      self.receipt("2026-09-25T11:33:00Z")]))
+        self.assertIsNone(self.check([self.dispatch("2026-09-25T11:50:00Z")]))
+
+    def test_trafficdom_221_session_that_never_posted_a_receipt_is_reported_early(self):
+        # Real trafficdom PR #221: dispatched 08:04, session lost GitHub access
+        # and stopped at 08:05 without posting anything.
+        stall = self.check([self.dispatch("2026-09-25T11:44:00Z")])
+        self.assertEqual(stall[0], "session:1")
+        self.assertIn("CONTEXT_RECEIPT", stall[1])
+        self.assertIn("GitHub App", stall[1])
+
+    def test_receipt_on_the_linked_pr_counts(self):
+        linked = [self.receipt("2026-09-25T11:33:00Z")]
+        self.assertIsNone(self.check([self.dispatch("2026-09-25T11:30:00Z")], linked))
+
+    def test_receipt_then_silence_is_still_reported_after_an_hour(self):
+        stall = self.check([self.dispatch("2026-09-25T10:42:00Z"),
+                            self.receipt("2026-09-25T10:45:00Z")])
+        self.assertEqual(stall[0], "session:1")
+        self.assertIn("neither", stall[1])
 
     def test_zoe_290_decision_that_did_not_restart_claude_is_reported(self):
         # Real Zoe #290: ZANETA_DECISION posted 07:50, nothing started.
@@ -125,7 +148,8 @@ class TestSessionChecks(unittest.TestCase):
     def test_decision_followed_by_a_dispatch_is_fine(self):
         decision = comment("ZANETA_DECISION\n\nGo.", "2026-09-25T11:30:00Z")
         decision["id"] = 9
-        self.assertIsNone(self.check([decision, self.dispatch("2026-09-25T11:30:30Z", 2)]))
+        self.assertIsNone(self.check([decision, self.dispatch("2026-09-25T11:30:30Z", 2),
+                                      self.receipt("2026-09-25T11:33:00Z")]))
 
 
 class TestPrChecks(unittest.TestCase):

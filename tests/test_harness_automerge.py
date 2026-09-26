@@ -155,10 +155,49 @@ class TestRun(unittest.TestCase):
         self.assertIn("AUTO_MERGE_SKIPPED", posts[0][0][-1])
         self.assertIn("after 20 minutes", posts[0][0][-1])
 
+    def test_refused_merge_names_the_missing_permission(self):
+        class Refusing(FakeGitHub):
+            def __call__(self, argv, token=None):
+                path = next(a for a in argv if a.startswith("repos/"))
+                if path.endswith("/merge"):
+                    self.calls.append((argv, token))
+                    raise automerge.harness_handoff.GhError(
+                        "`gh api --method PUT` failed: gh: Resource not accessible by personal "
+                        "access token (HTTP 403)")
+                if "/files" in path:
+                    self.calls.append((argv, token))
+                    return json.dumps([{"filename": ".github/workflows/x.yml"}])
+                return super().__call__(argv, token)
+        posts = self.run_with(Refusing([pr()], [[]]))
+        notice = posts[-1][0][-1]
+        self.assertIn("AUTO_MERGE_SKIPPED", notice)
+        self.assertIn("Workflows: Read and write", notice)
+
     def test_missing_owner_token_never_merges(self):
         posts = self.run_with(FakeGitHub([pr()], [[]]), token="")
         self.assertEqual(len(posts), 1)
         self.assertIn("SANTIAGO_CODEX_BRIDGE_TOKEN", posts[0][0][-1])
+
+
+class TestMergeRefusal(unittest.TestCase):
+
+    def test_trafficdom_220_workflow_change_names_the_workflows_permission(self):
+        error = "`gh api --method PUT` failed: gh: Resource not accessible by personal access token (HTTP 403)"
+        reason = automerge.merge_refusal_reason(
+            error, [".github/workflows/molosoc-finance-packeta-dry-run.yml", "tests/x.py"])
+        self.assertIn("Workflows: Read and write", reason)
+        self.assertIn("molosoc-finance-packeta-dry-run.yml", reason)
+        self.assertIn("Contents: Read and write", reason)
+
+    def test_trafficdom_213_code_change_names_contents(self):
+        reason = automerge.merge_refusal_reason("HTTP 403: Resource not accessible", ["a.py"])
+        self.assertIn("Contents: Read and write", reason)
+        self.assertNotIn("Workflows", reason)
+
+    def test_other_refusals_are_passed_through(self):
+        reason = automerge.merge_refusal_reason("HTTP 405: Base branch was modified", [])
+        self.assertIn("Base branch was modified", reason)
+        self.assertNotIn("token needs", reason)
 
 
 class TestNotices(unittest.TestCase):
@@ -182,6 +221,13 @@ class TestWorkflow(unittest.TestCase):
         self.assertIn("MERGE_TOKEN: ${{ secrets.SANTIAGO_CODEX_BRIDGE_TOKEN }}", self.text)
         self.assertIn('--head "$HEAD_SHA"', self.text)
         self.assertIn("ref: ${{ github.event.repository.default_branch }}", self.text)
+
+    def test_a_rerun_retries_the_merge_of_an_open_verified_pr(self):
+        # trafficdom #213/#220: after the token was fixed, re-running the failed
+        # run stopped at "VERIFIED marker already exists" and never merged.
+        self.assertIn('pr.state === "open" && !pr.merged', self.text)
+        self.assertEqual(self.text.count("if: steps.validate.outputs.merge == 'true'"), 2)
+        self.assertEqual(self.text.count("if: steps.validate.outputs.valid == 'true'"), 1)
 
     def test_job_can_wait_for_checks(self):
         self.assertIn("timeout-minutes: 30", self.text)

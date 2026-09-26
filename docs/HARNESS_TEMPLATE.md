@@ -30,8 +30,9 @@ sessions from pushing the same branch at once (Zoe #297/#298).
 No human ever adds or re-adds a label. Every step leaves a comment, and
 the watchdog posts `HARNESS_STALLED` (saying which step stopped and the fix)
 when a step does not happen: a task never started, a Claude session that
-ended without a handoff (after 60 minutes), a decision that did not restart
-Claude, a handoff never posted, or Codex never answering.
+ended without a handoff (no `CONTEXT_RECEIPT` within 15 minutes, or no
+handoff within 60), a decision that did not restart Claude, a handoff never
+posted, or Codex never answering.
 
 ## Shared kit: identical in every repo
 
@@ -65,8 +66,10 @@ Copy these files verbatim. When one changes, change it in
   same in every repo; only its header comment differs.
 - Label cleanup on closed items (`harness-label-close-cleanup.yml` /
   `harness-label-reconciler.yml`) where a repo has it.
-- `santiago-changes-requested-requeue.yml` (a human `CHANGES_REQUESTED`
-  comment re-queues Claude) where a repo has it; Zoe deliberately does not.
+- `harness-requeue.yml` passes `--changes-requested` (Santiago's
+  `CHANGES_REQUESTED` review restarts Claude) everywhere except Zoe, which
+  deliberately does not. It replaced `santiago-changes-requested-requeue.yml`,
+  which is retired everywhere.
 - Retired everywhere: `controller-claude-label-bridge.yml` and every
   `controller:*` label. Apply `READY_FOR_CLAUDE_CLOUD` directly.
 
@@ -102,6 +105,10 @@ Copy these files verbatim. When one changes, change it in
   open, ask Žaneta before creating it.
 - Within 2 minutes, a `ROUTINE_DISPATCHED` comment appears. If
   `ROUTINE_FIRE_FAILED` appears instead, read its error.
+- To send a PR back to Claude, post a comment on the PR whose line starts
+  with `CHANGES_REQUESTED` (anything may follow, e.g. `— review of <sha>`)
+  and that names the PR's current head commit. Claude restarts on its own;
+  a review of an older commit gets `HANDOFF_IGNORED` saying so.
 
 **Žaneta**
 - Answer a `NEEDS_ZANETA` with a comment whose first line is
@@ -162,3 +169,10 @@ summary; both re-start Claude.
 On the Issue/PR, find the last automatic comment in the table above. The
 next step in "The loop" is the one that did not happen. The watchdog checks
 the same thing every 15 minutes and names it for you.
+
+When nothing at all happens and no automatic comment appears, open the
+repository's Actions tab. A failed run whose annotation says "The job was not
+started because recent account payments have failed or your spending limit
+needs to be increased" means GitHub stopped all workflows for billing; the
+watchdog cannot report that because it runs on Actions too. Fix billing, then
+re-run the failed runs (trafficdom #221, 2026-09-26).

@@ -77,10 +77,19 @@ jobs:
             if (comments.some(comment => (comment.body || "").includes(marker))) {
               core.info("Exact-head VERIFIED marker already exists.");
               core.setOutput("valid", "false");
+              // Re-running this run (or a second clean review of the same
+              // head) retries the merge of a still-open VERIFIED PR, e.g.
+              // after the owner token was fixed (trafficdom #213/#220).
+              if (pr.state === "open" && !pr.merged) {
+                core.info("PR is still open: retrying the automatic merge.");
+                core.setOutput("merge", "true");
+                core.setOutput("head_sha", currentHead);
+              }
               return;
             }
 
             core.setOutput("valid", "true");
+            core.setOutput("merge", "true");
             core.setOutput("head_sha", currentHead);
 
       - name: Record VERIFIED
@@ -122,7 +131,7 @@ jobs:
       # skips HOLD/draft/conflicted PRs and posts MERGED or AUTO_MERGE_SKIPPED.
       # It merges with the owner's token so push-triggered workflows still run.
       - name: Checkout this repository's own trusted default-branch code
-        if: steps.validate.outputs.valid == 'true'
+        if: steps.validate.outputs.merge == 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.repository.default_branch }}
@@ -130,7 +139,7 @@ jobs:
           persist-credentials: false
 
       - name: Merge the VERIFIED head automatically
-        if: steps.validate.outputs.valid == 'true'
+        if: steps.validate.outputs.merge == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           MERGE_TOKEN: ${{ secrets.SANTIAGO_CODEX_BRIDGE_TOKEN }}
