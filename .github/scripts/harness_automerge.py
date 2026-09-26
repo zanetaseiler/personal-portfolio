@@ -27,9 +27,20 @@ import argparse
 import json
 import os
 import re
-import subprocess
 import sys
 import time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import harness_handoff  # noqa: E402
+
+# What the workflow's GITHUB_TOKEN needs for the calls below (branches,
+# check-runs, commit status, the PR, comments); the merge itself uses
+# MERGE_TOKEN. tests/.../test_harness_permissions.py checks every workflow
+# running this script grants it (bonafide PR #14: a missing `checks: read`
+# made the check-runs read fail with HTTP 403 and skipped the merge).
+GITHUB_TOKEN_PERMISSIONS = {"contents": "read", "checks": "read", "statuses": "read",
+                           "pull-requests": "read", "issues": "write"}
 
 WAIT_MINUTES = 20
 POLL_SECONDS = 30
@@ -114,10 +125,7 @@ def merged_notice(head, merge_sha, ignored):
 # --- GitHub plumbing -------------------------------------------------------
 
 def _gh(argv, token=None):
-    env = dict(os.environ)
-    if token:
-        env["GH_TOKEN"] = token
-    return subprocess.run(["gh", *argv], check=True, capture_output=True, text=True, env=env).stdout
+    return harness_handoff.run_gh(argv, token=token)
 
 
 def _get(repo, path):
@@ -180,10 +188,12 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         return run(args.repo, args.number, args.head)
-    except subprocess.CalledProcessError as error:
+    except harness_handoff.GhError as error:
+        print(f"::error::{error}", file=sys.stderr)
         _comment(args.repo, args.number, skipped_notice(
-            f"GitHub refused the merge: {(error.stderr or error.stdout or '').strip()[:300]}",
-            args.head))
+            f"GitHub refused a step of the merge: {error}. If it names the token, the "
+            f"repository secret `{harness_handoff.SECRET}` must be able to write Contents and "
+            "Pull requests in this repository", args.head))
         return 1
 
 

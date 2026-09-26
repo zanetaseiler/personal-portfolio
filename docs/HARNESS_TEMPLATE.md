@@ -153,6 +153,7 @@ summary; both re-start Claude.
 | `VERIFIED` (github-actions) | Codex found nothing on this head | nothing; it merges automatically |
 | `MERGED` (github-actions) | The VERIFIED head was merged | nothing |
 | `AUTO_MERGE_SKIPPED` (github-actions) | VERIFIED, but not merged; reason inside | do what the reason says |
+| `HARNESS_SETUP_PROBLEM` (github-actions) | A step could not run because the `SANTIAGO_CODEX_BRIDGE_TOKEN` secret is missing or GitHub refused it; GitHub's own error is inside | fix the secret as it says, then re-run the failed run |
 | `HARNESS_STALLED` (github-actions) | A step silently stopped; the step and fix are inside | do the one fix it names |
 | `NEEDS_ZANETA` (Claude) | A human decision is needed | reply `ZANETA_DECISION …` |
 

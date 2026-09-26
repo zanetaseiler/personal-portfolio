@@ -40,6 +40,10 @@ import re
 import subprocess
 import sys
 
+# What the workflow's GITHUB_TOKEN needs for this script's API calls;
+# test_harness_permissions.py checks every workflow running it grants it.
+GITHUB_TOKEN_PERMISSIONS = {"pull-requests": "read", "issues": "write"}
+
 KEYWORD = "READY_FOR_SANTIAGO"
 SHORT_SHA = 7
 _HEX_TOKEN = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])")
@@ -114,12 +118,49 @@ def ignored_notice(reason, effect=("Codex was NOT asked to review. Nothing will 
         "- format: see `docs/HARNESS_TEMPLATE.md`.\n")
 
 
-def _gh(argv, token=None):
+class GhError(RuntimeError):
+    """A `gh` call GitHub refused; the message is GitHub's own error text."""
+
+
+def run_gh(argv, token=None):
+    """Run `gh`; on failure raise GhError carrying GitHub's error message
+    (a bare CalledProcessError hides it -- bonafide PR #14, 2026-09-25)."""
     env = dict(os.environ)
     if token:
         env["GH_TOKEN"] = token
-    return subprocess.run(["gh", *argv], check=True, capture_output=True,
-                          text=True, env=env).stdout
+    result = subprocess.run(["gh", *argv], capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()[:500] or f"exit status {result.returncode}"
+        raise GhError(f"`gh {' '.join(argv[:3])}` failed: {detail}")
+    return result.stdout
+
+
+_gh = run_gh
+
+SECRET = "SANTIAGO_CODEX_BRIDGE_TOKEN"
+
+
+def setup_problem_notice(step, problem, human):
+    """Comment for a harness step that could not run because of repository
+    setup (a missing or refused token), not because of anything on the PR."""
+    return (
+        "HARNESS_SETUP_PROBLEM\n\n"
+        f"- step that did not happen: {step}\n"
+        f"- problem: {problem}\n"
+        f"- fix: the repository secret `{SECRET}` must hold a token of `{human}` that can "
+        "write Issues, Pull requests and Contents in THIS repository (Settings -> Secrets "
+        "and variables -> Actions). For a repository owned by an organization, create the "
+        "token with the organization as its resource owner and approve it there if asked.\n"
+        "- then: re-run the failed run in the Actions tab; nothing else is needed.\n")
+
+
+def report_setup_problem(repo, number, step, problem, human):
+    """Print the problem and post it on the item with GITHUB_TOKEN. Never raises."""
+    print(f"::error::{step}: {problem}", file=sys.stderr)
+    try:
+        _comment(repo, number, setup_problem_notice(step, problem, human))
+    except GhError as error:
+        print(f"Could not post HARNESS_SETUP_PROBLEM either: {error}", file=sys.stderr)
 
 
 def _comment(repo, number, body, token=None):
@@ -154,13 +195,26 @@ def main(argv=None):
         print(f"{decision}\t{reason}")
         return 0
 
+    step = "posting `@codex review` to wake Santiago/Codex"
     wake_token = os.environ.get("CODEX_WAKE_TOKEN", "")
     if not wake_token:
-        print("SANTIAGO_CODEX_BRIDGE_TOKEN is not configured", file=sys.stderr)
+        report_setup_problem(args.repo, args.number, step,
+                             f"the secret `{SECRET}` is empty or not visible to this repository",
+                             args.human)
         return 1
 
+    def wake():
+        try:
+            _comment(args.repo, args.number, "@codex review", token=wake_token)
+        except GhError as error:
+            report_setup_problem(args.repo, args.number, step,
+                                 f"GitHub refused the `{SECRET}` token: {error}", args.human)
+            return False
+        return True
+
     if args.label_event:
-        _comment(args.repo, args.number, "@codex review", token=wake_token)
+        if not wake():
+            return 1
         print(f"Label handoff: posted @codex review on #{args.number}.")
         return 0
 
@@ -180,7 +234,8 @@ def main(argv=None):
     )
     print(f"{decision}: {reason}")
     if decision == HANDOFF:
-        _comment(args.repo, args.number, "@codex review", token=wake_token)
+        if not wake():
+            return 1
     elif decision == IGNORED:
         _comment(args.repo, args.number, ignored_notice(reason))
     return 0

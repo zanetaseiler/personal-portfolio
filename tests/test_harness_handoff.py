@@ -166,6 +166,87 @@ class TestCheckOnlyMode(unittest.TestCase):
         self.assertIn("no commit SHA", reason)
 
 
+class TestSetupProblems(unittest.TestCase):
+    """bonafide Issue #13 / PR #14 (2026-09-25): a missing, then refused,
+    SANTIAGO_CODEX_BRIDGE_TOKEN failed only as a red Actions run, and the
+    log said nothing but "exit status 1"."""
+
+    def run_main(self, token, gh):
+        import io, json, os, tempfile
+        from contextlib import redirect_stderr, redirect_stdout
+        event = {"comment": {"body": CORRECTION_COMMENT, "user": {"login": OWNER}},
+                 "issue": {"number": 14, "pull_request": {"url": "x"}}}
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(event, handle)
+        saved = {k: os.environ.get(k) for k in ("GITHUB_EVENT_PATH", "CODEX_WAKE_TOKEN")}
+        os.environ["GITHUB_EVENT_PATH"] = handle.name
+        os.environ["CODEX_WAKE_TOKEN"] = token
+        original = handoff._gh
+        handoff._gh = gh
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                return handoff.main(["--human", OWNER, "--repo", "o/r", "--number", "14"])
+        finally:
+            handoff._gh = original
+            os.unlink(handle.name)
+            for key, value in saved.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def fake_gh(self, calls, refuse_token=None):
+        def gh(argv, token=None):
+            calls.append((argv, token))
+            if token and token == refuse_token:
+                raise handoff.GhError("`gh api --method POST` failed: HTTP 403: Resource not "
+                                      "accessible by personal access token")
+            if argv[-1].endswith("pulls/14"):
+                return '{"head": {"sha": "%s"}}' % HEAD
+            return "{}"
+        return gh
+
+    def posted(self, calls):
+        return [argv[-1][len("body="):] for argv, _ in calls if "--method" in argv]
+
+    def test_missing_token_is_reported_on_the_pr(self):
+        calls = []
+        self.assertEqual(self.run_main("", self.fake_gh(calls)), 1)
+        notice, = self.posted(calls)
+        self.assertTrue(notice.startswith("HARNESS_SETUP_PROBLEM"))
+        self.assertIn("empty or not visible", notice)
+        self.assertIn("SANTIAGO_CODEX_BRIDGE_TOKEN", notice)
+
+    def test_refused_token_is_reported_with_githubs_own_words(self):
+        calls = []
+        self.assertEqual(self.run_main("org-less-token", self.fake_gh(calls, "org-less-token")), 1)
+        wake, notice = self.posted(calls)
+        self.assertEqual(wake, "@codex review")
+        self.assertIn("Resource not accessible by personal access token", notice)
+        self.assertIn("organization as its resource owner", notice)
+        # The notice itself is posted with GITHUB_TOKEN, not the refused token.
+        self.assertIsNone(calls[-1][1])
+
+    def test_notice_carries_no_handoff_keyword_line(self):
+        notice = handoff.setup_problem_notice("step", "problem", OWNER)
+        for keyword in ("READY_FOR_SANTIAGO", "NEEDS_ZANETA", "ZANETA_DECISION", "VERIFIED"):
+            self.assertFalse(handoff.has_keyword_line(notice, keyword), keyword)
+
+    def test_run_gh_error_carries_githubs_message(self):
+        import os, stat, tempfile
+        folder = tempfile.mkdtemp()
+        fake = Path(folder) / "gh"
+        fake.write_text("#!/bin/sh\necho 'gh: Resource not accessible by personal access token (HTTP 403)' >&2\nexit 1\n")
+        fake.chmod(fake.stat().st_mode | stat.S_IEXEC)
+        saved = os.environ["PATH"]
+        os.environ["PATH"] = folder
+        try:
+            with self.assertRaises(handoff.GhError) as caught:
+                handoff.run_gh(["api", "--method", "POST", "repos/o/r/issues/14/comments"])
+        finally:
+            os.environ["PATH"] = saved
+        self.assertIn("Resource not accessible by personal access token (HTTP 403)", str(caught.exception))
+
 class TestWorkflow(unittest.TestCase):
 
     def setUp(self):

@@ -43,6 +43,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import harness_handoff  # noqa: E402
 
+# What the workflow's GITHUB_TOKEN needs for this script's API calls;
+# test_harness_permissions.py checks every workflow running it grants it.
+GITHUB_TOKEN_PERMISSIONS = {"issues": "write"}
+
 CLAUDE_LABEL = "READY_FOR_CLAUDE_CLOUD"
 DECISION = "ZANETA_DECISION"
 DUPLICATE_WINDOW = timedelta(minutes=30)
@@ -102,12 +106,7 @@ def _time(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _gh(argv, token=None):
-    env = dict(os.environ)
-    if token:
-        env["GH_TOKEN"] = token
-    return subprocess.run(["gh", *argv], check=True, capture_output=True,
-                          text=True, env=env).stdout
+_gh = harness_handoff.run_gh
 
 
 def requeue(repo, number, token):
@@ -145,11 +144,21 @@ def main(argv=None):
              "-f", "body=" + harness_handoff.ignored_notice(
                  reason, effect="Claude was NOT started or restarted by this.")])
     elif decision == START:
+        step = "starting Claude (adding READY_FOR_CLAUDE_CLOUD as the owner)"
         token = os.environ.get("HUMAN_TOKEN", "")
         if not token:
-            print("SANTIAGO_CODEX_BRIDGE_TOKEN is not configured", file=sys.stderr)
+            harness_handoff.report_setup_problem(
+                args.repo, number, step,
+                f"the secret `{harness_handoff.SECRET}` is empty or not visible to this repository",
+                args.human)
             return 1
-        requeue(args.repo, number, token)
+        try:
+            requeue(args.repo, number, token)
+        except harness_handoff.GhError as error:
+            harness_handoff.report_setup_problem(
+                args.repo, number, step,
+                f"GitHub refused the `{harness_handoff.SECRET}` token: {error}", args.human)
+            return 1
     return 0
 
 
