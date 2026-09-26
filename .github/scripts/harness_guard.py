@@ -39,6 +39,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness_handoff  # noqa: E402
 
+# What the workflow's GITHUB_TOKEN needs for this script's API calls;
+# test_harness_permissions.py checks every workflow running it grants it.
+GITHUB_TOKEN_PERMISSIONS = {"pull-requests": "read", "issues": "write"}
+
 LABEL = "READY_FOR_CLAUDE_CLOUD"
 BOT = "github-actions[bot]"
 LOCK_MINUTES = 60

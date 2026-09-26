@@ -43,6 +43,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import harness_handoff  # noqa: E402
 
+# What the workflow's GITHUB_TOKEN needs for this script's API calls;
+# test_harness_permissions.py checks every workflow running it grants it.
+GITHUB_TOKEN_PERMISSIONS = {"issues": "write"}
+
 CLAUDE_LABEL = "READY_FOR_CLAUDE_CLOUD"
 DECISION = "ZANETA_DECISION"
 DUPLICATE_WINDOW = timedelta(minutes=30)

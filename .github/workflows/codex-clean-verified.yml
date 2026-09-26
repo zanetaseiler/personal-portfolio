@@ -8,6 +8,10 @@ permissions:
   contents: read
   issues: write
   pull-requests: write
+  # The automatic merge step reads the head's check runs and commit status
+  # before merging (bonafide PR #14 was skipped without these).
+  checks: read
+  statuses: read
 
 concurrency:
   group: codex-clean-verified-${{ github.event.issue.number }}

@@ -40,6 +40,10 @@ import re
 import subprocess
 import sys
 
+# What the workflow's GITHUB_TOKEN needs for this script's API calls;
+# test_harness_permissions.py checks every workflow running it grants it.
+GITHUB_TOKEN_PERMISSIONS = {"pull-requests": "read", "issues": "write"}
+
 KEYWORD = "READY_FOR_SANTIAGO"
 SHORT_SHA = 7
 _HEX_TOKEN = re.compile(r"(?<![0-9a-f])[0-9a-f]{7,40}(?![0-9a-f])")

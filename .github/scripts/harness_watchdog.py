@@ -50,6 +50,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness_handoff  # noqa: E402
 import harness_requeue  # noqa: E402
 
+# What the workflow's GITHUB_TOKEN needs for this script's API calls;
+# test_harness_permissions.py checks every workflow running it grants it.
+GITHUB_TOKEN_PERMISSIONS = {"contents": "read", "pull-requests": "read", "issues": "write"}
+
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 CLAUDE_LABEL = "READY_FOR_CLAUDE_CLOUD"
 DISPATCH_WAIT = timedelta(minutes=15)

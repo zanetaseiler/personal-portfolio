@@ -34,6 +34,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import harness_handoff  # noqa: E402
 
+# What the workflow's GITHUB_TOKEN needs for the calls below (branches,
+# check-runs, commit status, the PR, comments); the merge itself uses
+# MERGE_TOKEN. tests/.../test_harness_permissions.py checks every workflow
+# running this script grants it (bonafide PR #14: a missing `checks: read`
+# made the check-runs read fail with HTTP 403 and skipped the merge).
+GITHUB_TOKEN_PERMISSIONS = {"contents": "read", "checks": "read", "statuses": "read",
+                           "pull-requests": "read", "issues": "write"}
+
 WAIT_MINUTES = 20
 POLL_SECONDS = 30
 BAD = {"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"}
